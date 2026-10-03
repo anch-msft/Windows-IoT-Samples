@@ -54,8 +54,16 @@ namespace EdgeAI_ObjectDetection
         public MainWindow()
         {
             InitializeComponent();
-            this.AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+
+            // AppWindow.Resize uses physical pixels, so scale the desired logical size by the window DPI.
+            IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double scale = GetDpiForWindow(hwnd) / 96.0;
+            this.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1200 * scale), (int)(800 * scale)));
         }
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+
         private async void MainGrid_Loaded(object sender, RoutedEventArgs e)
         {
             try
@@ -81,11 +89,14 @@ namespace EdgeAI_ObjectDetection
 
             MediaFrameSourceGroup[] cameras = (await MediaFrameSourceGroup.FindAllAsync()).ToArray();
 
-            foreach (MediaFrameSourceGroup camera in cameras)
+            foreach (MediaFrameSourceGroup camera in cameras.Where(group => group.SourceInfos.Any(IsColorVideoSource)))
                 Cameras.Add(camera);
 
             CameraComboBox.SelectedIndex = Cameras.Count > 0 ? 0 : -1;
             CameraComboBox.IsEnabled = Cameras.Count > 0;
+
+            if (Cameras.Count == 0)
+                InferenceStatusTextBlock.Text = "Inference: no compatible color camera was found.";
         }
 
         private async void ModelFolderButton_Click(object sender, RoutedEventArgs e)
@@ -189,8 +200,26 @@ namespace EdgeAI_ObjectDetection
 
         private async void CameraComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (CameraComboBox.SelectedItem is MediaFrameSourceGroup selectedGroup)
+            if (CameraComboBox.SelectedItem is not MediaFrameSourceGroup selectedGroup)
+                return;
+
+            try
+            {
                 await StartCameraPreview(selectedGroup);
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceWarning($"Camera preview failed: {exception}");
+                InferenceStatusTextBlock.Text = $"Inference: camera preview unavailable ({exception.Message})";
+                await StopCameraPreviewAsync();
+            }
+        }
+
+        private static bool IsColorVideoSource(MediaFrameSourceInfo info)
+        {
+            return info.SourceKind == MediaFrameSourceKind.Color &&
+                (info.MediaStreamType == MediaStreamType.VideoPreview ||
+                 info.MediaStreamType == MediaStreamType.VideoRecord);
         }
 
         private async Task StartCameraPreview(MediaFrameSourceGroup sourceGroup)
@@ -212,14 +241,16 @@ namespace EdgeAI_ObjectDetection
                     MemoryPreference = MediaCaptureMemoryPreference.Cpu
                 });
 
-                MediaFrameSourceInfo sourceInfo = sourceGroup.SourceInfos
-                    .Where(info => info.SourceKind == MediaFrameSourceKind.Color &&
-                        (info.MediaStreamType == MediaStreamType.VideoPreview ||
-                         info.MediaStreamType == MediaStreamType.VideoRecord))
-                    .OrderBy(info => info.MediaStreamType == MediaStreamType.VideoPreview ? 0 : 1)
-                    .FirstOrDefault()
-                    ?? throw new InvalidOperationException("The selected camera has no color video source.");
-                MediaFrameSource frameSource = mediaCapture.FrameSources[sourceInfo.Id];
+                MediaFrameSource? frameSource = mediaCapture.FrameSources.Values
+                    .Where(source => IsColorVideoSource(source.Info))
+                    .OrderBy(source => source.Info.MediaStreamType == MediaStreamType.VideoPreview ? 0 : 1)
+                    .FirstOrDefault();
+
+                frameSource ??= mediaCapture.FrameSources.Values
+                    .FirstOrDefault(source => source.Info.SourceKind == MediaFrameSourceKind.Color);
+
+                if (frameSource is null)
+                    throw new InvalidOperationException("The selected camera has no supported color frame source.");
 
                 frameReader = await mediaCapture.CreateFrameReaderAsync(
                     frameSource,
