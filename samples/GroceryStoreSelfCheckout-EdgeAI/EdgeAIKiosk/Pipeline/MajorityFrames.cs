@@ -1,7 +1,7 @@
-using System.Collections.Generic;
-using System.Linq;
 using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Models;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace EdgeAIKiosk.Pipeline;
 

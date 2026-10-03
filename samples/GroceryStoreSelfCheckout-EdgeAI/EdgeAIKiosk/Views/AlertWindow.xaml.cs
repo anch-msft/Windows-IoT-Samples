@@ -1,7 +1,7 @@
-using System.Threading.Tasks;
 using EdgeAIKiosk.Models;
 using EdgeAIKiosk.Services;
 using Microsoft.UI.Xaml;
+using System.Threading.Tasks;
 
 namespace EdgeAIKiosk.Views;
 

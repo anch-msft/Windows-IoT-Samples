@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using EdgeAIKiosk.Pipeline;
+using System.Diagnostics;
 using Windows.Graphics.Imaging;
 
 namespace EdgeAIKiosk.Tests;

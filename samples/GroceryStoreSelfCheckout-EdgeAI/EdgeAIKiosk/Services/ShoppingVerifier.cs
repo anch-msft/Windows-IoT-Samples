@@ -1,9 +1,9 @@
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Models;
 using EdgeAIKiosk.Pipeline;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace EdgeAIKiosk.Services;
 

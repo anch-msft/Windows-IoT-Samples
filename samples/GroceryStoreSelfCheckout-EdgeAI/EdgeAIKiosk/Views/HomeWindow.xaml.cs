@@ -1,8 +1,8 @@
-using EdgeAIKiosk;
 using EdgeAIKiosk.Services;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.Windows.AI.MachineLearning;
 using System;
 using System.Collections.Generic;
@@ -11,7 +11,6 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Microsoft.UI.Xaml.Input;
 using Windows.Media.Devices;
 
 namespace EdgeAIKiosk.Views;

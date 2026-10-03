@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using EdgeAIKiosk;
 using Windows.Graphics.Imaging;
 using Windows.Media.Capture;
-using Windows.Media.Core;
 using Windows.Media.Capture.Frames;
+using Windows.Media.Core;
 using Windows.Media.MediaProperties;
 
 namespace EdgeAIKiosk.Pipeline;

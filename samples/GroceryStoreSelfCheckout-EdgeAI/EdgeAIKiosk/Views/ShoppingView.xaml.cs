@@ -1,13 +1,12 @@
+using EdgeAIKiosk.Models;
+using EdgeAIKiosk.Services;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Input;
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using EdgeAIKiosk;
-using EdgeAIKiosk.Models;
-using EdgeAIKiosk.Services;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Input;
 using Windows.System;
 
 namespace EdgeAIKiosk.Views;
