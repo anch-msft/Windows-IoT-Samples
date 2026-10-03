@@ -225,6 +225,8 @@ After warm-up, each test runs 1,000 operations. The allowed process-private memo
 | `onnxruntime.dll` is missing at runtime | Restore and rebuild for an explicit runtime such as `win-arm64` or `win-x64`; Windows ML supplies the matching native runtime. |
 | Verification always mismatches | Make sure scanned values match the configured labels and the model class ids align with `CocoLabels.cs`. |
 
-## Contributing and License
+## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+Third-party dependencies are covered in [NOTICE.md](NOTICE.md). Model weights are not included in this repository and are licensed separately. Review the license of the specific model you use.
