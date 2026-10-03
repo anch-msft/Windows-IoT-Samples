@@ -1,3 +1,4 @@
+using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Models;
 using EdgeAIKiosk.Services;
 using Microsoft.UI.Xaml;
