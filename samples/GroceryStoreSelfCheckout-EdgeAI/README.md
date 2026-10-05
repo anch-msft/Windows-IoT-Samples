@@ -169,6 +169,86 @@ Copy the published folder to the target Snapdragon X device and run `EdgeAIKiosk
 
 For MSIX packaging, use Visual Studio **Package and Publish** on the `EdgeAIKiosk` project. Sign the package with a trusted certificate before installing on a kiosk device.
 
+## Reusable ObjectDetection view
+
+`EdgeAI-ObjectDetection` hosts `Controls\YoloInferenceView.xaml`. The window only discovers models, execution providers, and camera groups; the control owns its camera reader, preview player, inference pipeline, and overlays. Changing any selection performs a coordinated stop/start. Select **One shot** and press **Run one inference** for on-demand detection; streaming is the default.
+
+The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the `Controls` and `Pipeline` folders, preserve or update their namespaces, and use the same Windows ML, Windows App SDK, and ImageSharp dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
+
+```xml
+<!-- Add xmlns:ai="using:EdgeAI_ObjectDetection.Controls" to the containing view. -->
+<ai:YoloInferenceView x:Name="Yolo"
+                      Width="800" Height="600"
+                      PreviewStretch="UniformToFill"
+                      ShowEndToEndInferenceTime="True"
+                      ShowInferenceTime="True" />
+```
+
+```csharp
+var settings = new InferenceSettings
+{
+    FrameSourceGroup = selectedCameraGroup,
+    ModelPath = selectedModel.Path,
+    ExecutionProvider = selectedDevice,
+    MaxEndToEndFps = 30,
+    InferenceType = InferenceType.Stream
+};
+
+Yolo.DetectionsUpdated += (_, args) =>
+{
+    // Empty means inference completed with no detections.
+    foreach (Detection detection in args.Detections)
+        Debug.WriteLine($"{detection.Label}: {detection.Confidence:P0}");
+};
+Yolo.Faulted += (_, args) => Debug.WriteLine(args.Exception);
+await Yolo.StartAsync(settings);
+
+// Before replacing a model/camera or navigating away from a reusable view:
+await Yolo.StopAsync();
+await Yolo.StartAsync(settings with { ModelPath = anotherModel.Path });
+
+// When permanently retiring the instance:
+await Yolo.DisposeAsync();
+```
+
+### Lifecycle and settings
+
+Call lifecycle methods on the UI thread. `StartAsync` snapshots the settings and returns when the pipeline and preview are started, without waiting for a detection. Repeating a start with equivalent settings is harmless; different settings require a stop first. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
+
+For one-shot operation, start with `InferenceType.OneShot`, then call `await Yolo.InferOnceAsync(cancellationToken)`. This returns the same read-only detection list delivered by `DetectionsUpdated`. Calls are serialized. A request waits for a new available frame and a usable preview layout; use cancellation when the host no longer needs the result. `MaxEndToEndFps` caps streaming cycles only (0.1-240 FPS); it does not throttle preview playback. Repeated frames are not reprocessed.
+
+`State` and `StateChanged` expose `Stopped`, `Starting`, `Running`, `Stopping`, and `Disposed`. Startup errors propagate to the caller. Asynchronous capture, preview, and streaming failures stop the pipeline and raise `Faulted`; one-shot execution errors also propagate to its caller. Public events run on the UI thread; handlers should be quick and should not synchronously block on lifecycle tasks.
+
+The host must await `StopAsync` or `DisposeAsync` before navigating/replacing its view. `Unloaded` does not automatically dispose the control. This single-window sample relies on process exit to reclaim resources when its window closes; it does not run asynchronous disposal in a close handler. Hosts that continue running after removing the view must explicitly await cleanup.
+
+### Preview and detections
+
+Normal XAML `Width`, `Height`, and layout constraints size the whole control, including its optional status lines. The remaining preview area can resize at runtime. `PreviewStretch` is fixed for each run: `None`, `Uniform`, and `UniformToFill` are supported; `Fill` is rejected. `None` displays one source pixel per physical screen pixel. Preview placement is calculated explicitly so display scaling and overlay mapping use the same geometry.
+
+Inference always consumes a centered square **inside the visible camera image**, excluding letterbox space and camera pixels cropped away by the preview. That square is resized to 640 x 640 without padding. Resize/DPI changes update the crop without restarting the model or camera, clear old boxes, and discard in-flight results with obsolete geometry. A zero-sized preview pauses inference, not capture. Hiding the camera image does not change this geometry.
+
+Each immutable `Detection` contains `ClassId`, `Label`, `Confidence`, and a `BoundingBox` with normalized `X`, `Y`, `Width`, and `Height` within the analyzed square. The origin is its top-left. Boxes are clipped to that square; coordinates are not relative to the full camera image or the XAML control. Hosts interested only in classes/counts can ignore the boxes. `GetSupportedClasses()` returns the read-only COCO label list, indexed by class ID.
+
+These dependency properties can change while running: `ShowCameraPreview`, `ShowBoundingBoxes`, `ShowLabels`, `ShowConfidence`, `ShowInferenceStatus`, `ShowInferenceTime`, and `ShowEndToEndInferenceTime`. They default to true. Both timing displays update for each accepted result in streaming and one-shot modes. E2E inference time runs from acquiring the available camera frame through preprocessing, inference, postprocessing, dispatch back to the UI, and bounding-box/label element updates. It excludes waiting for a new frame, stream throttling, event-handler work, and deferred XAML layout/rendering or screen presentation. It measures the work of updating the overlays, not camera preview FPS or camera-to-display latency. The separate inference time covers the engine call (including its output decoding) without preprocessing or overlay updates.
+
+### Supported model contract
+
+Model selection is strict: the control loads exactly the requested file or fails. It accepts one float32 input `[1,3,640,640]` (RGB NCHW, values normalized to 0-1) and one float32 output `[1,300,6]`. Each output row is `x1, y1, x2, y2, confidence, classId`, with coordinates in model-input pixels and class IDs using the standard 80-class COCO ordering. Confidence filtering is currently fixed at 0.5.
+
+Both YOLO26 NMS-free one-to-one exports and exports with embedded NMS can satisfy this contract. The control does not perform additional NMS. Raw candidate outputs, dynamic shapes, other batch sizes, segmentation/pose outputs, and custom class mappings are not supported. Tensor metadata is validated, but cannot prove label semantics or training preprocessing; supplying a model trained/exported for this contract remains the host's responsibility.
+
+Camera capture uses the selected `MediaFrameSourceGroup` in `SharedReadOnly` mode, prefers a color preview stream and otherwise uses a color recording stream. It accepts the current camera format; it does not request 1080p or another resolution.
+
+### ObjectDetection checks
+
+Run the hardware-independent crop, model-shape, and normalized-detection tests:
+
+```powershell
+dotnet test EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj
+```
+
+On a device with a camera and compatible model, also exercise streaming/one-shot modes, model/camera/provider switching, a missing or incompatible model, and camera disconnection. Resize wide/tall/square previews with each supported stretch mode, including high-DPI displays; boxes must stay within the visible centered inference square. Check that stopping during startup or inference releases the camera and permits a subsequent start. These device checks require WinUI and hardware and are not covered by the hardware-independent suite.
+
 ## Testing
 
 Run the xUnit test project from the `samples\GroceryStoreSelfCheckout-EdgeAI` directory:

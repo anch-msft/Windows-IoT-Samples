@@ -9,9 +9,9 @@ namespace EdgeAI_ObjectDetection.Pipeline;
 
 public sealed class YoloPreprocessor
 {
-    public const int InputSize = 640;
+    public const int InputSize = YoloModelContract.InputSize;
 
-    public YoloModelInput Preprocess(SoftwareBitmap frame)
+    internal YoloModelInput Preprocess(SoftwareBitmap frame, PreviewGeometry crop)
     {
         using SoftwareBitmap rgbaFrame = SoftwareBitmap.Convert(
             frame,
@@ -23,11 +23,8 @@ public sealed class YoloPreprocessor
         rgbaFrame.CopyToBuffer(rgbaPixels.AsBuffer());
 
         using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(rgbaPixels, sourceWidth, sourceHeight);
-        int cropSize = Math.Min(sourceWidth, sourceHeight);
-        int cropX = (sourceWidth - cropSize) / 2;
-        int cropY = (sourceHeight - cropSize) / 2;
         image.Mutate(operation => operation
-            .Crop(new Rectangle(cropX, cropY, cropSize, cropSize))
+            .Crop(new Rectangle(crop.CropX, crop.CropY, crop.CropSize, crop.CropSize))
             .Resize(InputSize, InputSize));
 
         float[] tensor = new float[3 * InputSize * InputSize];
@@ -46,6 +43,6 @@ public sealed class YoloPreprocessor
             }
         });
 
-        return new YoloModelInput(tensor, sourceWidth, sourceHeight, cropX, cropY, cropSize);
+        return new YoloModelInput(tensor, sourceWidth, sourceHeight, crop.CropX, crop.CropY, crop.CropSize);
     }
 }
