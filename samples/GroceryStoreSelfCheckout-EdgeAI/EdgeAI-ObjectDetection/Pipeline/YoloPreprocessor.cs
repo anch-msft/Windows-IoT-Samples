@@ -7,11 +7,12 @@ using Windows.Graphics.Imaging;
 
 namespace EdgeAI_ObjectDetection.Pipeline;
 
-public sealed class YoloPreprocessor
+internal sealed class YoloPreprocessor
 {
     public const int InputSize = YoloModelContract.InputSize;
 
-    internal YoloModelInput Preprocess(SoftwareBitmap frame, PreviewGeometry crop)
+    internal float[] Preprocess(SoftwareBitmap frame, PreviewGeometry crop,
+        bool captureImage, out byte[]? imagePixels)
     {
         using SoftwareBitmap rgbaFrame = SoftwareBitmap.Convert(
             frame,
@@ -28,6 +29,7 @@ public sealed class YoloPreprocessor
             .Resize(InputSize, InputSize));
 
         float[] tensor = new float[3 * InputSize * InputSize];
+        byte[]? snapshotPixels = captureImage ? new byte[4 * InputSize * InputSize] : null;
         image.ProcessPixelRows(accessor =>
         {
             for (int y = 0; y < InputSize; y++)
@@ -39,10 +41,20 @@ public sealed class YoloPreprocessor
                     tensor[pixelIndex] = row[x].R / 255f;
                     tensor[InputSize * InputSize + pixelIndex] = row[x].G / 255f;
                     tensor[2 * InputSize * InputSize + pixelIndex] = row[x].B / 255f;
+                    if (snapshotPixels is not null)
+                    {
+                        // Copy the same resized pixels used by the tensor, not a later camera frame.
+                        int offset = pixelIndex * 4;
+                        snapshotPixels[offset] = row[x].B;
+                        snapshotPixels[offset + 1] = row[x].G;
+                        snapshotPixels[offset + 2] = row[x].R;
+                        snapshotPixels[offset + 3] = 255;
+                    }
                 }
             }
         });
 
-        return new YoloModelInput(tensor, sourceWidth, sourceHeight, crop.CropX, crop.CropY, crop.CropSize);
+        imagePixels = snapshotPixels;
+        return tensor;
     }
 }

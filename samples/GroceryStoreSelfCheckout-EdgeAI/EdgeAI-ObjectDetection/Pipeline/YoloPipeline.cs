@@ -68,7 +68,8 @@ internal sealed class YoloPipeline : IAsyncDisposable
             new InvalidOperationException($"Camera capture failed ({args.Code}): {args.Message}")));
 
     // Called serially on a worker thread. The caller awaits this work before disposal.
-    public PipelineResult? TryInfer(PreviewGeometry geometry, int sourceWidth, int sourceHeight, CancellationToken token)
+    public PipelineResult? TryInfer(PreviewGeometry geometry, int sourceWidth, int sourceHeight,
+        bool captureImage, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         long startedAt = Stopwatch.GetTimestamp();
@@ -85,13 +86,13 @@ internal sealed class YoloPipeline : IAsyncDisposable
             return null; // A format change will be picked up by the next layout snapshot.
         }
 
-        YoloModelInput input = _preprocessor.Preprocess(bitmap, geometry);
+        float[] input = _preprocessor.Preprocess(bitmap, geometry, captureImage, out byte[]? imagePixels);
         token.ThrowIfCancellationRequested();
         Stopwatch inference = Stopwatch.StartNew();
         IReadOnlyList<Detection> detections = _engine!.Run(input);
         inference.Stop();
         token.ThrowIfCancellationRequested();
-        return new(detections, inference.Elapsed, startedAt);
+        return new(detections, inference.Elapsed, startedAt, imagePixels);
     }
 
     public async ValueTask DisposeAsync()
@@ -133,4 +134,5 @@ internal sealed class YoloPipeline : IAsyncDisposable
     }
 }
 
-internal sealed record PipelineResult(IReadOnlyList<Detection> Detections, TimeSpan InferenceTime, long StartedAt);
+internal sealed record PipelineResult(
+    IReadOnlyList<Detection> Detections, TimeSpan InferenceTime, long StartedAt, byte[]? ImagePixels);

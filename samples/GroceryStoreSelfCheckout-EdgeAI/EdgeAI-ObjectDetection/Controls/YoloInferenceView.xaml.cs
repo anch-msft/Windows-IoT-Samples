@@ -162,14 +162,9 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposeRequested, this);
-            if (State == YoloInferenceState.Running)
+            if (State != YoloInferenceState.Stopped)
             {
-                if (_settings == settings)
-                {
-                    return;
-                }
-
-                throw new InvalidOperationException("Stop the control before changing inference settings.");
+                throw new InvalidOperationException("The control must be stopped before calling StartAsync.");
             }
 
             _settings = settings with
@@ -354,7 +349,8 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         }
     }
 
-    public async Task<IReadOnlyList<Detection>> InferOnceAsync(CancellationToken cancellationToken = default)
+    /// <summary>Returns detections and their model-input image. The caller must dispose the snapshot.</summary>
+    public async Task<InferenceSnapshot> InferOnceAsync(CancellationToken cancellationToken = default)
     {
         CheckThread();
         await _lifecycle.WaitAsync(cancellationToken);
@@ -370,10 +366,12 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             while (true)
             {
                 linked.Token.ThrowIfCancellationRequested();
-                IReadOnlyList<Detection>? result = await ProcessFrameAsync(linked.Token);
+                PipelineResult? result = await ProcessFrameAsync(linked.Token, captureImage: true);
                 if (result is not null)
                 {
-                    return result;
+                    linked.Token.ThrowIfCancellationRequested();
+                    return new InferenceSnapshot(result.Detections, result.ImagePixels
+                        ?? throw new InvalidOperationException("One-shot inference did not capture an image."));
                 }
 
                 await Task.Delay(10, linked.Token);
@@ -420,7 +418,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         }
     }
 
-    private async Task<IReadOnlyList<Detection>?> ProcessFrameAsync(CancellationToken token)
+    private async Task<PipelineResult?> ProcessFrameAsync(CancellationToken token, bool captureImage = false)
     {
         RefreshGeometry();
         if (_geometry is not { } geometry)
@@ -431,7 +429,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         long version = _geometryVersion;
         var format = _pipeline!.FrameSource!.CurrentFormat.VideoFormat;
         PipelineResult? result = await Task.Run(
-            () => _pipeline.TryInfer(geometry, (int)format.Width, (int)format.Height, token), token);
+            () => _pipeline.TryInfer(geometry, (int)format.Width, (int)format.Height, captureImage, token), token);
         token.ThrowIfCancellationRequested();
         RefreshGeometry();
         if (result is null || version != _geometryVersion)
@@ -445,7 +443,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         TimingText.Text = $"Inference: {result.InferenceTime.TotalMilliseconds:F0} ms";
         EndToEndTimingText.Text = $"E2E inference: {endToEndTime.TotalMilliseconds:F0} ms";
         DetectionsUpdated?.Invoke(this, new DetectionsUpdatedEventArgs(result.Detections));
-        return result.Detections;
+        return result;
     }
 
     private void Player_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)

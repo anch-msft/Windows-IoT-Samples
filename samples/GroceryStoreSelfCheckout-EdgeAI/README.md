@@ -213,9 +213,20 @@ await Yolo.DisposeAsync();
 
 ### Lifecycle and settings
 
-Call lifecycle methods on the UI thread. `StartAsync` snapshots the settings and returns when the pipeline and preview are started, without waiting for a detection. Repeating a start with equivalent settings is harmless; different settings require a stop first. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
+Call lifecycle methods on the UI thread. `StartAsync` retains the supplied init-only settings and returns when the pipeline and preview are started, without waiting for a detection. The control must be stopped before starting; calling `StartAsync` while running throws `InvalidOperationException`, even with equivalent settings. Await `StopAsync` before starting again. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
 
-For one-shot operation, start with `InferenceType.OneShot`, then call `await Yolo.InferOnceAsync(cancellationToken)`. This returns the same read-only detection list delivered by `DetectionsUpdated`. Calls are serialized. A request waits for a new available frame and a usable preview layout; use cancellation when the host no longer needs the result. `MaxEndToEndFps` caps streaming cycles only (0.1-240 FPS); it does not throttle preview playback. Repeated frames are not reprocessed.
+For one-shot operation, start with `InferenceType.OneShot`, then call `await Yolo.InferOnceAsync(cancellationToken)`. This returns an `InferenceSnapshot` containing `Detections` (the same read-only list delivered by `DetectionsUpdated`) and `Image` (a caller-owned `SoftwareBitmap`). The image is the exact 640 x 640 cropped/resized RGB image used to build the model tensor, stored as opaque BGRA8 with premultiplied alpha for XAML display. Detection boxes are normalized to this image. It is not the full camera frame or a screenshot with overlays. Dispose the snapshot after copying, displaying, or saving its image; its detections remain usable after disposal. The sample host discards the image by disposing the result immediately.
+
+```csharp
+// Yolo has already been started in OneShot mode.
+using var snapshot = await Yolo.InferOnceAsync(cancellationToken);
+var imageSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
+await imageSource.SetBitmapAsync(snapshot.Image);
+SnapshotImage.Source = imageSource; // A host-owned XAML Image.
+var detections = snapshot.Detections;
+```
+
+Calls are serialized. A request waits for a new available frame and a usable preview layout; use cancellation when the host no longer needs the result. The live preview is not frozen, and the control continues to update its own overlays as before. Returned snapshots remain valid across subsequent inferences or stopping/disposing the control until the caller disposes them. Streaming still delivers detection-only events and does not allocate snapshot image buffers. `InferOnceAsync` still requires one-shot mode; stop and restart with `InferenceType.OneShot` when switching from streaming. `MaxEndToEndFps` caps streaming cycles only (0.1-240 FPS); it does not throttle preview playback. Repeated frames are not reprocessed.
 
 `State` and `StateChanged` expose `Stopped`, `Starting`, `Running`, `Stopping`, and `Disposed`. Startup errors propagate to the caller. Asynchronous capture, preview, and streaming failures stop the pipeline and raise `Faulted`; one-shot execution errors also propagate to its caller. Public events run on the UI thread; handlers should be quick and should not synchronously block on lifecycle tasks.
 

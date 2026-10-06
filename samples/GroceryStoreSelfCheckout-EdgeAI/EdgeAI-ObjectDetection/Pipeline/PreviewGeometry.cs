@@ -2,6 +2,14 @@ using System;
 
 namespace EdgeAI_ObjectDetection.Pipeline;
 
+/// <summary>
+/// Describes a centered square crop of the camera frame and how it appears in the preview.
+/// <see cref="CropX"/>, <see cref="CropY"/>, and <see cref="CropSize"/> are in source-frame pixels.
+/// <see cref="Scale"/> converts source pixels to layout units; <see cref="ImageX"/> and
+/// <see cref="ImageY"/> give the full frame's top-left relative to the viewport's top-left.
+/// <see cref="OverlayX"/>, <see cref="OverlayY"/>, and <see cref="OverlaySize"/> give the crop's
+/// rectangle in overlay layout coordinates, derived from the crop and full-frame transform.
+/// </summary>
 internal readonly record struct PreviewGeometry(
     int CropX, int CropY, int CropSize,
     double Scale, double ImageX, double ImageY)

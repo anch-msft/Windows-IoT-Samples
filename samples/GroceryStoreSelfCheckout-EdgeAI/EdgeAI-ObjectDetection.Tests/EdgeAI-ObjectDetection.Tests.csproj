@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net8.0;net8.0-windows10.0.19041.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -18,5 +19,13 @@
     <Compile Include="..\EdgeAI-ObjectDetection\Pipeline\DetectionDecoder.cs" Link="DetectionDecoder.cs" />
     <Compile Include="..\EdgeAI-ObjectDetection\Pipeline\YoloModelContract.cs" Link="YoloModelContract.cs" />
     <Compile Include="..\EdgeAI-ObjectDetection\Controls\Detection.cs" Link="Detection.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <Compile Include="..\EdgeAI-ObjectDetection\Controls\InferenceSnapshot.cs" Link="InferenceSnapshot.cs" />
+    <Compile Include="..\EdgeAI-ObjectDetection\Pipeline\YoloPreprocessor.cs" Link="YoloPreprocessor.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' != 'net8.0-windows10.0.19041.0'">
+    <Compile Remove="InferenceSnapshotTests.cs" />
   </ItemGroup>
 </Project>

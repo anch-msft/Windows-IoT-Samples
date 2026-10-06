@@ -185,7 +185,7 @@ public sealed partial class MainWindow : Window
         UpdateControls(false);
         try
         {
-            await InferenceView.InferOnceAsync();
+            using var snapshot = await InferenceView.InferOnceAsync();
         }
         catch (Exception error)
         {

@@ -8,7 +8,7 @@ using System.Linq;
 
 namespace EdgeAI_ObjectDetection.Pipeline;
 
-public sealed class YoloInferenceEngine : IDisposable
+internal sealed class YoloInferenceEngine : IDisposable
 {
     private static readonly string[] CocoLabels =
     [
@@ -59,10 +59,28 @@ public sealed class YoloInferenceEngine : IDisposable
             throw new FileNotFoundException($"Model file not found: {modelPath}", modelPath);
         }
 
-        InferenceSession session = CreateSessionForDevice(modelPath, selectedDevice);
+        InferenceSession session;
+        using (SessionOptions options = new())
+        {
+            options.AppendExecutionProvider(OrtEnv.Instance(), [selectedDevice], new Dictionary<string, string>());
+            session = new InferenceSession(modelPath, options);
+        }
         try
         {
-            ValidateModel(session);
+            if (session.InputMetadata.Count != 1 || session.OutputMetadata.Count != 1)
+            {
+                throw new InvalidOperationException("Expected exactly one YOLO input and one output.");
+            }
+
+            NodeMetadata input = session.InputMetadata.Values.Single();
+            NodeMetadata output = session.OutputMetadata.Values.Single();
+            if (!input.IsTensor || input.ElementType != typeof(float) ||
+                !output.IsTensor || output.ElementType != typeof(float))
+            {
+                throw new InvalidOperationException("Expected float32 input and output tensors.");
+            }
+
+            YoloModelContract.ValidateShapes(input.Dimensions, output.Dimensions);
             return new YoloInferenceEngine(session, selectedDevice.EpName, selectedDevice.HardwareDevice.Type.ToString());
         }
         catch
@@ -72,29 +90,11 @@ public sealed class YoloInferenceEngine : IDisposable
         }
     }
 
-    private static void ValidateModel(InferenceSession session)
-    {
-        if (session.InputMetadata.Count != 1 || session.OutputMetadata.Count != 1)
-        {
-            throw new InvalidOperationException("Expected exactly one YOLO input and one output.");
-        }
-
-        NodeMetadata input = session.InputMetadata.Values.Single();
-        NodeMetadata output = session.OutputMetadata.Values.Single();
-        if (!input.IsTensor || input.ElementType != typeof(float) ||
-            !output.IsTensor || output.ElementType != typeof(float))
-        {
-            throw new InvalidOperationException("Expected float32 input and output tensors.");
-        }
-
-        YoloModelContract.ValidateShapes(input.Dimensions, output.Dimensions);
-    }
-
-    public IReadOnlyList<Detection> Run(YoloModelInput input)
+    public IReadOnlyList<Detection> Run(float[] input)
     {
         string inputName = _session.InputMetadata.Keys.FirstOrDefault()
             ?? throw new InvalidOperationException("The selected model has no input tensor.");
-        DenseTensor<float> tensor = new(input.Tensor, [1, 3, YoloPreprocessor.InputSize, YoloPreprocessor.InputSize]);
+        DenseTensor<float> tensor = new(input, [1, 3, YoloPreprocessor.InputSize, YoloPreprocessor.InputSize]);
         NamedOnnxValue modelInput = NamedOnnxValue.CreateFromTensor(inputName, tensor);
         using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = _session.Run([modelInput]);
         DisposableNamedOnnxValue output = outputs.FirstOrDefault()
@@ -124,13 +124,6 @@ public sealed class YoloInferenceEngine : IDisposable
         }
 
         return detections.AsReadOnly();
-    }
-
-    private static InferenceSession CreateSessionForDevice(string modelPath, OrtEpDevice device)
-    {
-        using SessionOptions options = new();
-        options.AppendExecutionProvider(OrtEnv.Instance(), [device], new Dictionary<string, string>());
-        return new InferenceSession(modelPath, options);
     }
 
     public void Dispose() => _session.Dispose();
