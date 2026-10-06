@@ -171,7 +171,7 @@ For MSIX packaging, use Visual Studio **Package and Publish** on the `EdgeAIKios
 
 ## Reusable ObjectDetection view
 
-`EdgeAI-ObjectDetection` hosts `Controls\YoloInferenceView.xaml`. The window only discovers models, execution providers, and camera groups; the control owns its camera reader, preview player, inference pipeline, and overlays. Changing any selection performs a coordinated stop/start. Select **One shot** and press **Run one inference** for on-demand detection; streaming is the default.
+`EdgeAI-ObjectDetection` hosts `YoloInferenceView\YoloInferenceView.xaml`. The component's implementation lives in the `YoloInferenceView` folder, with `Pipeline` and `Types` subfolders. The window only discovers models, execution providers, and camera groups; the control owns its camera reader, preview player, inference pipeline, and overlays. Changing any selection performs a coordinated stop/start. Select **One shot** and press **Run one inference** for on-demand detection; streaming is the default.
 
 The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the `Controls` and `Pipeline` folders, preserve or update their namespaces, and use the same Windows ML, Windows App SDK, and ImageSharp dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
 
@@ -252,11 +252,15 @@ Camera capture uses the selected `MediaFrameSourceGroup` in `SharedReadOnly` mod
 
 ### ObjectDetection checks
 
-Run the hardware-independent crop, model-shape, and normalized-detection tests:
+The crop, model-shape, normalized-detection, and snapshot tests reference the application directly. They require Windows and the same WinUI build tools as the application, but do not need a camera or model. From a Visual Studio Developer PowerShell, build and run them:
 
 ```powershell
-dotnet test EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj
+msbuild EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj /t:Restore /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+msbuild EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj /t:Build /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+dotnet test EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj --no-build --no-restore -c Debug -r win-x64 -p:Platform=x64
 ```
+
+For ARM64, use `Platform=ARM64` and `RuntimeIdentifier=win-arm64` for both build commands, and `-r win-arm64 -p:Platform=ARM64` for the test command on a Windows ARM64 device.
 
 On a device with a camera and compatible model, also exercise streaming/one-shot modes, model/camera/provider switching, a missing or incompatible model, and camera disconnection. Resize wide/tall/square previews with each supported stretch mode, including high-DPI displays; boxes must stay within the visible centered inference square. Check that stopping during startup or inference releases the camera and permits a subsequent start. These device checks require WinUI and hardware and are not covered by the hardware-independent suite.
 

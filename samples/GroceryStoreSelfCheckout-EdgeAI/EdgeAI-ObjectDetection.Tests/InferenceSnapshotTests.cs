@@ -14,7 +14,7 @@ public sealed class InferenceSnapshotTests
     {
         using var frame = CreateFrame();
         var geometry = new PreviewGeometry(cropX, cropY, cropSize, 1, 0, 0);
-        var input = new YoloPreprocessor().Preprocess(frame, geometry, true, out var pixels);
+        var input = YoloInferenceEngine.Preprocess(frame, geometry, true, out var pixels);
         Assert.NotNull(pixels);
 
         using var snapshot = new InferenceSnapshot(Array.Empty<Detection>(), pixels);
@@ -46,10 +46,9 @@ public sealed class InferenceSnapshotTests
     public void StreamingDoesNotAllocateSnapshotPixels()
     {
         using var frame = CreateFrame();
-        var preprocessor = new YoloPreprocessor();
         var geometry = new PreviewGeometry(80, 0, 640, 1, 0, 0);
-        var streaming = preprocessor.Preprocess(frame, geometry, false, out var streamingPixels);
-        var oneShot = preprocessor.Preprocess(frame, geometry, true, out var oneShotPixels);
+        var streaming = YoloInferenceEngine.Preprocess(frame, geometry, false, out var streamingPixels);
+        var oneShot = YoloInferenceEngine.Preprocess(frame, geometry, true, out var oneShotPixels);
 
         Assert.Null(streamingPixels);
         Assert.NotNull(oneShotPixels);
@@ -62,12 +61,12 @@ public sealed class InferenceSnapshotTests
         byte[] pixels;
         using (var frame = CreateFrame())
         {
-            new YoloPreprocessor().Preprocess(frame, new PreviewGeometry(80, 0, 640, 1, 0, 0),
+            YoloInferenceEngine.Preprocess(frame, new PreviewGeometry(80, 0, 640, 1, 0, 0),
                 true, out var capturedPixels);
             pixels = capturedPixels!;
         }
 
-        var detection = DetectionDecoder.Decode(160, 80, 480, 400, .8f, 0, new[] { "person" });
+        var detection = YoloInferenceEngine.DecodeDetection(160, 80, 480, 400, .8f, 0, new[] { "person" });
         Assert.NotNull(detection);
         IReadOnlyList<Detection> detections = Array.AsReadOnly(new[] { detection });
         using var snapshot = new InferenceSnapshot(detections, pixels);

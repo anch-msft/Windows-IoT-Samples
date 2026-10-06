@@ -396,8 +396,6 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     private async Task RunStreamAsync(CancellationToken token)
     {
         YoloPipeline? pipeline = _pipeline;
-        // Ensure StartAsync has returned before detections or faults can be delivered.
-        await Task.Yield();
         try
         {
             while (true)
@@ -460,7 +458,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     private void QueueFault(Exception error, YoloPipeline? failedPipeline)
     {
         Trace.TraceError(error.ToString());
-        if (!DispatcherQueue.TryEnqueue(async () =>
+        if (true != DispatcherQueue?.TryEnqueue(async () =>
         {
             if (failedPipeline is null || !ReferenceEquals(_pipeline, failedPipeline))
             {

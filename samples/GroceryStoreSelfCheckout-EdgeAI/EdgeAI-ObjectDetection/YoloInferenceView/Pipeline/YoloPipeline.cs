@@ -18,7 +18,6 @@ internal sealed class YoloPipeline : IAsyncDisposable
     private MediaFrameReader? _reader;
     private bool _readerStarted;
     private YoloInferenceEngine? _engine;
-    private readonly YoloPreprocessor _preprocessor = new();
     private TimeSpan? _lastFrameTime;
     public event EventHandler<InferenceFaultedEventArgs>? Faulted;
     public MediaFrameSource? FrameSource
@@ -86,7 +85,7 @@ internal sealed class YoloPipeline : IAsyncDisposable
             return null; // A format change will be picked up by the next layout snapshot.
         }
 
-        float[] input = _preprocessor.Preprocess(bitmap, geometry, captureImage, out byte[]? imagePixels);
+        float[] input = YoloInferenceEngine.Preprocess(bitmap, geometry, captureImage, out byte[]? imagePixels);
         token.ThrowIfCancellationRequested();
         Stopwatch inference = Stopwatch.StartNew();
         IReadOnlyList<Detection> detections = _engine!.Run(input);

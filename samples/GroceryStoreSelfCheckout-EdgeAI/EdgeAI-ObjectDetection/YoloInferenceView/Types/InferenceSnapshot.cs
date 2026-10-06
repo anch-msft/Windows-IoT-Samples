@@ -20,7 +20,7 @@ public sealed class InferenceSnapshot : IDisposable
     {
         Detections = detections;
         _image = SoftwareBitmap.CreateCopyFromBuffer(imagePixels.AsBuffer(),
-            BitmapPixelFormat.Bgra8, YoloModelContract.InputSize, YoloModelContract.InputSize,
+            BitmapPixelFormat.Bgra8, YoloInferenceEngine.InputSize, YoloInferenceEngine.InputSize,
             BitmapAlphaMode.Premultiplied);
     }
 

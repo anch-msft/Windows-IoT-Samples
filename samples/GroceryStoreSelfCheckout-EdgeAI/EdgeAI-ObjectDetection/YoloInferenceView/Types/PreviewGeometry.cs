@@ -1,6 +1,6 @@
 using System;
 
-namespace EdgeAI_ObjectDetection.Pipeline;
+namespace EdgeAI_ObjectDetection.Controls;
 
 /// <summary>
 /// Describes a centered square crop of the camera frame and how it appears in the preview.

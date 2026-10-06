@@ -1,4 +1,4 @@
-using EdgeAI_ObjectDetection.Pipeline;
+using EdgeAI_ObjectDetection.Controls;
 
 namespace EdgeAI_ObjectDetection.Tests;
 
