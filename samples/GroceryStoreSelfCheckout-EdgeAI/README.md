@@ -29,19 +29,19 @@ The current demo flow is:
 
 | Area | Requirement |
 | --- | --- |
-| Hardware | Windows device with an NPU, DirectX 12 GPU, or CPU. Windows ML prefers NPU, then GPU, then CPU. |
-| OS | Windows 11 24H2 or newer recommended for dynamic execution-provider installation. The project targets `net8.0-windows10.0.19041.0` and package min version `10.0.18362.0`. |
+| Hardware | Windows device with an NPU, DirectX 12 GPU, or CPU. The kiosk's Auto mode tries NPU, then GPU, then CPU; ObjectDetection uses the explicitly selected execution provider. |
+| OS | Windows 11 24H2 or newer recommended for dynamic execution-provider installation. Both applications target `net8.0-windows10.0.19041.0`. |
 | SDK | .NET 8 SDK. |
-| IDE | Visual Studio 2022 17.8 or newer with .NET desktop development, Windows App SDK, and WinUI tooling. |
+| IDE | Visual Studio with `.slnx` support (Visual Studio 2022 17.14 or newer), .NET desktop development, Windows App SDK, and WinUI tooling. Use a Visual Studio Developer PowerShell for MSBuild commands. |
 | Camera | Built-in camera or USB UVC-compatible webcam. |
 | Scanner | Barcode scanner that behaves like a keyboard, or a keyboard for manual demo input. |
-| Model | A compatible YOLO26 ONNX model copied into `EdgeAIKiosk\Models\`. |
+| Model | A compatible ONNX model with the input/output contract below. Copy it into `EdgeAIKiosk\Models\` for checkout, or select its folder in ObjectDetection. |
 
 ## Quick Start
 
 ```powershell
-git clone https://github.com/t-shrpathak_microsoft/EdgeAIKioskProject.git
-cd EdgeAIKioskProject
+git clone https://github.com/microsoft/Windows-IoT-Samples.git
+Set-Location Windows-IoT-Samples\samples\GroceryStoreSelfCheckout-EdgeAI
 
 New-Item -ItemType Directory -Force EdgeAIKiosk\Models
 
@@ -49,17 +49,17 @@ New-Item -ItemType Directory -Force EdgeAIKiosk\Models
 # or another model zoo, converted to the contract in Model Setup.
 Copy-Item <path-to-model>\yolo26x.onnx EdgeAIKiosk\Models\yolo26x.onnx
 
-dotnet restore EdgeAIKiosk\EdgeAIKiosk.csproj
-dotnet build EdgeAIKiosk\EdgeAIKiosk.csproj -c Debug -r win-arm64
-dotnet run --project EdgeAIKiosk\EdgeAIKiosk.csproj -c Debug -r win-arm64
+msbuild EdgeAIKiosk\EdgeAIKiosk.csproj /restore /t:Build /p:Configuration=Debug /p:Platform=ARM64 /p:RuntimeIdentifier=win-arm64
 ```
 
 Visual Studio is the recommended launch path for day-to-day WinUI debugging:
 
 1. Open `EdgeAIKiosk.slnx`.
-2. Select the `ARM64` platform for Snapdragon X hardware.
+2. Set `EdgeAIKiosk` as the startup project and select the `ARM64` platform for Snapdragon X hardware, or `x64` for an x64 device.
 3. Confirm `EdgeAIKiosk\Models\yolo26x.onnx` exists before launching.
 4. Press F5.
+
+To run the standalone detection demo instead, set `EdgeAI-ObjectDetection` as the startup project and press F5. Choose a folder containing compatible `.onnx` models, then select a model, execution provider, and camera. It does not require copying models into the kiosk's `Models` folder.
 
 ## Project Structure
 
@@ -83,6 +83,13 @@ EdgeAIKiosk\
 
 EdgeAIKiosk.Tests\
   xUnit tests for tracking, letterbox math, hardware options/errors, startup handling, and verification
+
+EdgeAI-ObjectDetection\
+  MainWindow.xaml                 Model-folder, provider, camera, and inference-mode selection
+  YoloInferenceView\              Reusable control with Pipeline and Types subfolders
+
+EdgeAI-ObjectDetection.Tests\
+  xUnit tests for preview geometry, model contracts, detection decoding, and snapshots
 ```
 
 ## Model Setup
@@ -118,7 +125,7 @@ The current loader expects:
 - Input name: `images`
 - Input layout: `NCHW`
 - Input shape: `1 x 3 x 640 x 640`
-- Opset: use the opset required by your export tool and supported by the installed ONNX Runtime QNN package
+- Opset: use the opset required by your export tool and supported by the installed Windows ML runtime and selected execution provider
 - Pixel format: RGB values normalized to `0.0` through `1.0`
 - Output shape: `1 x 300 x 6`, containing `x1`, `y1`, `x2`, `y2`, confidence, and COCO class id per detection row
 - Label mapping: class ids must match `CocoLabels.cs`
@@ -169,11 +176,25 @@ Copy the published folder to the target Snapdragon X device and run `EdgeAIKiosk
 
 For MSIX packaging, use Visual Studio **Package and Publish** on the `EdgeAIKiosk` project. Sign the package with a trusted certificate before installing on a kiosk device.
 
+### Publish profiles and package signing
+
+Both applications reference `Properties\PublishProfiles\win-$(Platform).pubxml`. The shared platform profiles are included in source control and contain only publishing settings, not credentials. Keep personal profiles, `*.pubxml.user` files, and `*.pfx` signing certificates out of Git.
+
+`EdgeAI-ObjectDetection` defaults to unsigned packaging and does not depend on a temporary certificate. Unsigned MSIX packages are not ready for normal installation. To create an installable package, configure signing in Visual Studio **Package and Publish**, or supply these MSBuild properties through local or CI configuration:
+
+```powershell
+# Run from a Visual Studio Developer PowerShell in the sample directory.
+# Keep the certificate outside the repository; its subject must match the manifest Publisher.
+msbuild EdgeAI-ObjectDetection\EdgeAI-ObjectDetection.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:GenerateAppxPackageOnBuild=true /p:AppxPackageSigningEnabled=true /p:PackageCertificateKeyFile="C:\Signing\EdgeAI.pfx"
+```
+
+Provide any certificate password through your local signing setup or CI secret handling, never through committed files. The target device must trust the signing certificate. If Visual Studio writes a private certificate path or thumbprint back into the project, keep that setting local rather than committing it.
+
 ## Reusable ObjectDetection view
 
 `EdgeAI-ObjectDetection` hosts `YoloInferenceView\YoloInferenceView.xaml`. The component's implementation lives in the `YoloInferenceView` folder, with `Pipeline` and `Types` subfolders. The window only discovers models, execution providers, and camera groups; the control owns its camera reader, preview player, inference pipeline, and overlays. Changing any selection performs a coordinated stop/start. Select **One shot** and press **Run one inference** to display an analyzed still image with its detections, without a live preview; streaming is the default.
 
-The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the `Controls` and `Pipeline` folders, preserve or update their namespaces, and use the same Windows ML, Windows App SDK, and ImageSharp dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
+The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the entire `YoloInferenceView` folder (including its XAML, `Pipeline`, and `Types`), preserve or update its namespaces, and use the same Windows ML, Windows App SDK, and ImageSharp dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
 
 ```xml
 <!-- Add xmlns:ai="using:EdgeAI_ObjectDetection.Controls" to the containing view. -->
