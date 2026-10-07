@@ -3,6 +3,7 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -139,6 +140,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     private void ApplyPresentation()
     {
         CameraPreview.Opacity = ShowCameraPreview ? 1 : 0;
+        StillFrame.Opacity = ShowCameraPreview ? 1 : 0;
         StatusText.Visibility = ShowInferenceStatus ? Visibility.Visible : Visibility.Collapsed;
         TimingText.Visibility = ShowInferenceTime ? Visibility.Visible : Visibility.Collapsed;
         EndToEndTimingText.Visibility = ShowEndToEndInferenceTime ? Visibility.Visible : Visibility.Collapsed;
@@ -179,15 +181,23 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
                 _pipeline.Faulted += Pipeline_Faulted;
                 await _pipeline.StartAsync(settings, _startupCancellation.Token);
                 _startupCancellation.Token.ThrowIfCancellationRequested();
-                _previewSource = MediaSource.CreateFromMediaFrameSource(_pipeline.FrameSource!);
-                _player = new MediaPlayer
+                if (settings.InferenceType == InferenceType.Stream)
                 {
-                    RealTimePlayback = true,
-                    Source = _previewSource
-                };
-                _player.MediaFailed += Player_MediaFailed;
-                CameraPreview.SetMediaPlayer(_player);
-                _player.Play();
+                    _previewSource = MediaSource.CreateFromMediaFrameSource(_pipeline.FrameSource!);
+                    _player = new MediaPlayer
+                    {
+                        RealTimePlayback = true,
+                        Source = _previewSource
+                    };
+                    _player.MediaFailed += Player_MediaFailed;
+                    CameraPreview.SetMediaPlayer(_player);
+                    _player.Play();
+                    CameraPreview.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    CameraPreview.Visibility = Visibility.Collapsed;
+                }
                 _runCancellation = new CancellationTokenSource();
                 SetState(YoloInferenceState.Running);
                 StatusText.Text = $"{(settings.InferenceType == InferenceType.Stream ? "Running" : "Ready for one shot")}: " +
@@ -339,6 +349,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             _runCancellation?.Dispose();
             _runCancellation = null;
             _settings = null;
+            StillFrame.Source = null;
             InvalidateGeometry();
             TimingText.Text = string.Empty;
             EndToEndTimingText.Text = string.Empty;
@@ -349,7 +360,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         }
     }
 
-    /// <summary>Returns detections and their model-input image. The caller must dispose the snapshot.</summary>
+    /// <summary>Displays and returns detections and their model-input image. The caller must dispose the snapshot.</summary>
     public async Task<InferenceSnapshot> InferOnceAsync(CancellationToken cancellationToken = default)
     {
         CheckThread();
@@ -370,8 +381,23 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
                 if (result is not null)
                 {
                     linked.Token.ThrowIfCancellationRequested();
-                    return new InferenceSnapshot(result.Detections, result.ImagePixels
+                    var snapshot = new InferenceSnapshot(result.Detections, result.ImagePixels
                         ?? throw new InvalidOperationException("One-shot inference did not capture an image."));
+                    try
+                    {
+                        // Upload before publishing so the still image and boxes change together.
+                        var imageSource = new SoftwareBitmapSource();
+                        await imageSource.SetBitmapAsync(snapshot.Image);
+                        linked.Token.ThrowIfCancellationRequested();
+                        StillFrame.Source = imageSource;
+                        PresentResult(result);
+                        return snapshot;
+                    }
+                    catch
+                    {
+                        snapshot.Dispose();
+                        throw;
+                    }
                 }
 
                 await Task.Delay(10, linked.Token);
@@ -435,13 +461,21 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             return null;
         }
 
+        if (!captureImage)
+        {
+            PresentResult(result);
+        }
+        return result;
+    }
+
+    private void PresentResult(PipelineResult result)
+    {
         _detections = result.Detections;
         DrawDetections();
         TimeSpan endToEndTime = Stopwatch.GetElapsedTime(result.StartedAt);
         TimingText.Text = $"Inference: {result.InferenceTime.TotalMilliseconds:F0} ms";
         EndToEndTimingText.Text = $"E2E inference: {endToEndTime.TotalMilliseconds:F0} ms";
         DetectionsUpdated?.Invoke(this, new DetectionsUpdatedEventArgs(result.Detections));
-        return result;
     }
 
     private void Player_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
@@ -514,14 +548,18 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     {
         InvalidateGeometry();
         RefreshGeometry();
+        DrawDetections();
     }
 
     private void InvalidateGeometry()
     {
         _geometryVersion++;
         _geometry = null;
-        _detections = Array.Empty<Detection>();
-        Overlay.Children.Clear();
+        if (StillFrame.Source is null)
+        {
+            _detections = Array.Empty<Detection>();
+            Overlay.Children.Clear();
+        }
     }
 
     private void RefreshGeometry()
@@ -572,19 +610,33 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         CameraPreview.Height = sourceHeight * scale;
         Canvas.SetLeft(CameraPreview, geometry.ImageX);
         Canvas.SetTop(CameraPreview, geometry.ImageY);
-        Overlay.Clip = new RectangleGeometry
-        {
-            Rect = new Rect(geometry.OverlayX, geometry.OverlayY, geometry.OverlaySize, geometry.OverlaySize)
-        };
     }
 
     private void DrawDetections()
     {
         Overlay.Children.Clear();
-        if (_geometry is not { } geometry)
+        PreviewGeometry? displayGeometry = _geometry;
+        if (StillFrame.Source is not null)
+        {
+            if (Viewport.ActualWidth <= 0 || Viewport.ActualHeight <= 0)
+            {
+                return;
+            }
+            displayGeometry = PreviewGeometry.FitSquare(YoloInferenceEngine.InputSize,
+                Viewport.ActualWidth, Viewport.ActualHeight);
+            StillFrame.Width = displayGeometry.Value.OverlaySize;
+            StillFrame.Height = displayGeometry.Value.OverlaySize;
+            Canvas.SetLeft(StillFrame, displayGeometry.Value.OverlayX);
+            Canvas.SetTop(StillFrame, displayGeometry.Value.OverlayY);
+        }
+        if (displayGeometry is not { } geometry)
         {
             return;
         }
+        Overlay.Clip = new RectangleGeometry
+        {
+            Rect = new Rect(geometry.OverlayX, geometry.OverlayY, geometry.OverlaySize, geometry.OverlaySize)
+        };
 
         SolidColorBrush brush = new(Colors.LimeGreen);
         foreach (Detection detection in _detections)

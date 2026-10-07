@@ -11,6 +11,7 @@
             <Canvas x:Name="PreviewSurface">
                 <MediaPlayerElement x:Name="CameraPreview"
                     AreTransportControlsEnabled="False" AutoPlay="False" Stretch="Uniform" />
+                <Image x:Name="StillFrame" Stretch="Uniform" />
             </Canvas>
             <Canvas x:Name="Overlay" IsHitTestVisible="False" />
         </Grid>

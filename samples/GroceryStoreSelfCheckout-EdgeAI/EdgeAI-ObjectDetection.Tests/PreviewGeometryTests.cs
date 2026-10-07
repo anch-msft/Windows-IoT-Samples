@@ -5,6 +5,35 @@ namespace EdgeAI_ObjectDetection.Tests;
 public sealed class PreviewGeometryTests
 {
     [Theory]
+    [InlineData(800, 400)]
+    [InlineData(400, 800)]
+    [InlineData(640, 640)]
+    [InlineData(100.1, 333.33)]
+    [InlineData(0.5, 0.25)]
+    public void StillImageAndNormalizedBoxesFitWithoutCropping(double width, double height)
+    {
+        var geometry = PreviewGeometry.FitSquare(640, width, height);
+        double size = Math.Min(width, height);
+
+        Assert.Equal(0, geometry.CropX);
+        Assert.Equal(0, geometry.CropY);
+        Assert.Equal(640, geometry.CropSize);
+        Assert.Equal(size, geometry.OverlaySize, 8);
+        Assert.Equal((width - size) / 2, geometry.OverlayX, 8);
+        Assert.Equal((height - size) / 2, geometry.OverlayY, 8);
+        Assert.Equal(width / 2, geometry.OverlayX + .5 * geometry.OverlaySize, 8);
+        Assert.Equal(height / 2, geometry.OverlayY + .5 * geometry.OverlaySize, 8);
+    }
+
+    [Theory]
+    [InlineData(0, 400)]
+    [InlineData(400, 0)]
+    [InlineData(double.NaN, 400)]
+    [InlineData(400, double.PositiveInfinity)]
+    public void InvalidStillImageLayoutIsRejected(double width, double height) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => PreviewGeometry.FitSquare(640, width, height));
+
+    [Theory]
     [InlineData(640, 480, 640, 640, 1, 80, 0, 480)]
     [InlineData(640, 480, 640, 640, 1.3333333333333333, 80, 0, 480)]
     [InlineData(1920, 1080, 800, 400, 0.4166666666666667, 480, 60, 960)]

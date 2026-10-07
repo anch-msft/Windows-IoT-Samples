@@ -18,6 +18,19 @@ internal readonly record struct PreviewGeometry(
     public double OverlayY => ImageY + CropY * Scale;
     public double OverlaySize => CropSize * Scale;
 
+    public static PreviewGeometry FitSquare(int imageSize, double viewportWidth, double viewportHeight)
+    {
+        if (imageSize <= 0 || !double.IsFinite(viewportWidth) || !double.IsFinite(viewportHeight) ||
+            viewportWidth <= 0 || viewportHeight <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewportWidth), "Image layout must be finite and positive.");
+        }
+
+        double size = Math.Min(viewportWidth, viewportHeight);
+        return new(0, 0, imageSize, size / imageSize,
+            (viewportWidth - size) / 2, (viewportHeight - size) / 2);
+    }
+
     // Round inward so even fractional layout sizes cannot include off-preview pixels.
     public static PreviewGeometry Create(int sourceWidth, int sourceHeight,
         double viewportWidth, double viewportHeight, double scale)
