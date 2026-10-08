@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using EdgeAI_ObjectDetection.Pipeline;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;

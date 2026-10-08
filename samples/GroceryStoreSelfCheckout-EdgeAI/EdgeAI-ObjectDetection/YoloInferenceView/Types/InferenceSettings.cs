@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using Microsoft.ML.OnnxRuntime;
 using System;
 using Windows.Media.Capture.Frames;

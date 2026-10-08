@@ -10,14 +10,14 @@
 
   <Identity
     Name="4d5e495a-4f50-4c0f-9f62-f8c2449b116c"
-    Publisher="CN=anthonychen"
+    Publisher="CN=Microsoft"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="4d5e495a-4f50-4c0f-9f62-f8c2449b116c" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>EdgeAI-ObjectDetection</DisplayName>
-    <PublisherDisplayName>anthonychen</PublisherDisplayName>
+    <PublisherDisplayName>Microsoft</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
