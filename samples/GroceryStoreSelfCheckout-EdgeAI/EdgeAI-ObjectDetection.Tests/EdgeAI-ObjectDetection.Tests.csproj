@@ -7,6 +7,8 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <Platforms>AnyCPU;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <WindowsAppSdkBootstrapInitialize>true</WindowsAppSdkBootstrapInitialize>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
@@ -15,8 +17,6 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\EdgeAI-ObjectDetection\EdgeAI-ObjectDetection.csproj">
-      <AdditionalProperties>EnableMsixTooling=false;AppxPackage=false;GenerateAppxPackageOnBuild=false</AdditionalProperties>
-    </ProjectReference>
+    <ProjectReference Include="..\EdgeAI-ObjectDetection\EdgeAI-ObjectDetection.csproj" />
   </ItemGroup>
 </Project>

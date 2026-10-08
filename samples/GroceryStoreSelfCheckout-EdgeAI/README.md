@@ -273,7 +273,9 @@ Camera capture uses the selected `MediaFrameSourceGroup` in `SharedReadOnly` mod
 
 ### ObjectDetection checks
 
-The crop, model-shape, normalized-detection, and snapshot tests reference the application directly. They require Windows and the same WinUI build tools as the application, but do not need a camera or model. From a Visual Studio Developer PowerShell, build and run them:
+The crop, model-shape, normalized-detection, and snapshot tests reference the application directly. They require Windows, the same WinUI build tools as the application, and the Windows App SDK runtime matching the app's SDK version and test-process architecture, but do not need a camera or model. The test project explicitly enables Windows App SDK bootstrapping, following Microsoft's [non-WinUI testing guidance](https://learn.microsoft.com/windows/apps/develop/testing/#testing-non-winui-functionality). The app disables Deployment Manager auto-initialization because it does not use Main/Singleton features; this also allows its assembly to load in an unpackaged test host. The project reference uses the normal app build without test-specific packaging overrides.
+
+In Visual Studio, build the solution with the platform matching your machine (`x64` or `ARM64`), then run `EdgeAI-ObjectDetection.Tests` in Test Explorer. From a Visual Studio Developer PowerShell, build and run them:
 
 ```powershell
 msbuild EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj /t:Restore /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
