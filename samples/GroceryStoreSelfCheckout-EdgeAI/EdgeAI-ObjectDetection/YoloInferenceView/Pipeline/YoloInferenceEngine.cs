@@ -157,8 +157,7 @@ internal sealed class YoloInferenceEngine : IDisposable
 
     public IReadOnlyList<Detection> Run(float[] input)
     {
-        string inputName = _session.InputMetadata.Keys.FirstOrDefault()
-            ?? throw new InvalidOperationException("The selected model has no input tensor.");
+        string inputName = _session.InputMetadata.Keys.Single();
         DenseTensor<float> tensor = new(input, [1, 3, InputSize, InputSize]);
         NamedOnnxValue modelInput = NamedOnnxValue.CreateFromTensor(inputName, tensor);
         using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = _session.Run([modelInput]);

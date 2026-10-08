@@ -169,9 +169,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
                 throw new InvalidOperationException("The control must be stopped before calling StartAsync.");
             }
 
-            _settings = settings with
-            {
-            };
+            _settings = settings;
             _startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             SetState(YoloInferenceState.Starting);
             StatusText.Text = $"Loading {Path.GetFileName(settings.ModelPath)} on {settings.ExecutionProvider.EpName}...";

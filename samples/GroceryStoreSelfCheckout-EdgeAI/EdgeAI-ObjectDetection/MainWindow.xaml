@@ -68,11 +68,13 @@
                     Header="Camera"
                     ItemsSource="{x:Bind Cameras}"
                     DisplayMemberPath="DisplayName" />
+                
                 <ComboBox x:Name="InferenceTypeComboBox" Header="Inference mode"
                     SelectedIndex="0">
                     <ComboBoxItem Content="Stream" />
                     <ComboBoxItem Content="One shot" />
                 </ComboBox>
+                
                 <Button x:Name="InferOnceButton" Content="Run one inference"
                     IsEnabled="False" Click="InferOnceButton_Click" />
                 <TextBlock x:Name="HostStatusTextBlock" TextWrapping="Wrap" />

@@ -51,7 +51,6 @@ public sealed partial class MainWindow : Window
 
     private async void MainGrid_Loaded(object sender, RoutedEventArgs e)
     {
-        ((FrameworkElement)sender).Loaded -= MainGrid_Loaded;
         try
         {
             try
