@@ -6,7 +6,7 @@ using System.Collections.Generic;
 
 namespace EdgeAI_ObjectDetection.Controls;
 
-/// <summary>Coordinates normalized to the analyzed square, not the full frame or view.</summary>
+/// <summary>Coordinates normalized to the 640x640 letterboxed model input, not the full frame or view.</summary>
 public readonly record struct DetectionBox(float X, float Y, float Width, float Height);
 
 public sealed record Detection(int ClassId, string Label, float Confidence, DetectionBox BoundingBox);

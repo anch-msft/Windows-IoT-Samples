@@ -4,15 +4,10 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using EdgeAI_ObjectDetection.Controls;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.Graphics.Imaging;
 
 namespace EdgeAI_ObjectDetection.Pipeline;
 
@@ -42,6 +37,8 @@ internal sealed class YoloInferenceEngine : IDisposable
     ];
 
     private readonly InferenceSession _session;
+    private float[]? _inputBuffer;
+    private NamedOnnxValue[] _inputs = Array.Empty<NamedOnnxValue>();
     public static IReadOnlyList<string> SupportedClasses
     {
         get;
@@ -111,65 +108,21 @@ internal sealed class YoloInferenceEngine : IDisposable
         }
     }
 
-    internal static float[] Preprocess(SoftwareBitmap frame, PreviewGeometry crop,
-        bool captureImage, out byte[]? imagePixels)
+    public IReadOnlyList<Detection> Run(PreprocessedFrame input)
     {
-        using SoftwareBitmap rgbaFrame = SoftwareBitmap.Convert(
-            frame,
-            BitmapPixelFormat.Rgba8,
-            BitmapAlphaMode.Ignore);
-        int sourceWidth = rgbaFrame.PixelWidth;
-        int sourceHeight = rgbaFrame.PixelHeight;
-        byte[] rgbaPixels = new byte[sourceWidth * sourceHeight * 4];
-        rgbaFrame.CopyToBuffer(rgbaPixels.AsBuffer());
-
-        using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(rgbaPixels, sourceWidth, sourceHeight);
-        image.Mutate(operation => operation
-            .Crop(new Rectangle(crop.CropX, crop.CropY, crop.CropSize, crop.CropSize))
-            .Resize(InputSize, InputSize));
-
-        float[] tensor = new float[3 * InputSize * InputSize];
-        byte[]? snapshotPixels = captureImage ? new byte[4 * InputSize * InputSize] : null;
-        image.ProcessPixelRows(accessor =>
+        if (!ReferenceEquals(_inputBuffer, input.Tensor))
         {
-            for (int y = 0; y < InputSize; y++)
-            {
-                Span<Rgba32> row = accessor.GetRowSpan(y);
-                for (int x = 0; x < InputSize; x++)
-                {
-                    int pixelIndex = y * InputSize + x;
-                    tensor[pixelIndex] = row[x].R / 255f;
-                    tensor[InputSize * InputSize + pixelIndex] = row[x].G / 255f;
-                    tensor[2 * InputSize * InputSize + pixelIndex] = row[x].B / 255f;
-                    if (snapshotPixels is not null)
-                    {
-                        // Copy the same resized pixels used by the tensor, not a later camera frame.
-                        int offset = pixelIndex * 4;
-                        snapshotPixels[offset] = row[x].B;
-                        snapshotPixels[offset + 1] = row[x].G;
-                        snapshotPixels[offset + 2] = row[x].R;
-                        snapshotPixels[offset + 3] = 255;
-                    }
-                }
-            }
-        });
-
-        imagePixels = snapshotPixels;
-        return tensor;
-    }
-
-    public IReadOnlyList<Detection> Run(float[] input)
-    {
-        string inputName = _session.InputMetadata.Keys.Single();
-        DenseTensor<float> tensor = new(input, [1, 3, InputSize, InputSize]);
-        NamedOnnxValue modelInput = NamedOnnxValue.CreateFromTensor(inputName, tensor);
-        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = _session.Run([modelInput]);
+            DenseTensor<float> tensor = new(input.Tensor, [1, 3, InputSize, InputSize]);
+            _inputs = [NamedOnnxValue.CreateFromTensor(_session.InputMetadata.Keys.Single(), tensor)];
+            _inputBuffer = input.Tensor;
+        }
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = _session.Run(_inputs);
         DisposableNamedOnnxValue output = outputs.FirstOrDefault()
             ?? throw new InvalidOperationException("The selected model returned no output tensors.");
-        return ParseDetections(output.AsTensor<float>());
+        return ParseDetections(output.AsTensor<float>(), input.Letterbox);
     }
 
-    private static IReadOnlyList<Detection> ParseDetections(Tensor<float> output)
+    private static IReadOnlyList<Detection> ParseDetections(Tensor<float> output, LetterboxGeometry letterbox)
     {
         if (output.Rank != 3 || output.Dimensions[0] != 1 ||
             output.Dimensions[1] != DetectionLimit || output.Dimensions[2] != 6)
@@ -183,7 +136,7 @@ internal sealed class YoloInferenceEngine : IDisposable
         {
             Detection? detection = DecodeDetection(
                 output[0, index, 0], output[0, index, 1], output[0, index, 2], output[0, index, 3],
-                output[0, index, 4], output[0, index, 5], SupportedClasses);
+                output[0, index, 4], output[0, index, 5], letterbox);
             if (detection is not null)
             {
                 detections.Add(detection);
@@ -194,25 +147,26 @@ internal sealed class YoloInferenceEngine : IDisposable
     }
 
     internal static Detection? DecodeDetection(float x1, float y1, float x2, float y2,
-        float confidence, float classId, IReadOnlyList<string> labels)
+        float confidence, float classId, LetterboxGeometry letterbox)
     {
         if (!float.IsFinite(confidence) || confidence < 0.5f || confidence > 1 ||
-            !float.IsFinite(classId) || classId < 0 || classId >= labels.Count || classId != (int)classId ||
+            !float.IsFinite(classId) || classId < 0 || classId >= SupportedClasses.Count || classId != (int)classId ||
             !float.IsFinite(x1) || !float.IsFinite(y1) || !float.IsFinite(x2) || !float.IsFinite(y2))
         {
             return null;
         }
 
-        x1 = Math.Clamp(x1 / InputSize, 0, 1);
-        y1 = Math.Clamp(y1 / InputSize, 0, 1);
-        x2 = Math.Clamp(x2 / InputSize, 0, 1);
-        y2 = Math.Clamp(y2 / InputSize, 0, 1);
+        x1 = Math.Max(x1, letterbox.Left);
+        y1 = Math.Max(y1, letterbox.Top);
+        x2 = Math.Min(x2, letterbox.Left + letterbox.Width);
+        y2 = Math.Min(y2, letterbox.Top + letterbox.Height);
         if (x2 <= x1 || y2 <= y1)
         {
             return null;
         }
-        return new Detection((int)classId, labels[(int)classId], confidence,
-            new DetectionBox(x1, y1, x2 - x1, y2 - y1));
+        var box = new DetectionBox(x1 / InputSize, y1 / InputSize,
+            (x2 - x1) / InputSize, (y2 - y1) / InputSize);
+        return new Detection((int)classId, SupportedClasses[(int)classId], confidence, box);
     }
 
     public void Dispose() => _session.Dispose();

@@ -8,13 +8,15 @@ namespace EdgeAI_ObjectDetection.Tests;
 public sealed class InferenceSnapshotTests
 {
     [Theory]
-    [InlineData(80, 0, 640)]
-    [InlineData(240, 160, 320)]
-    public void SnapshotPixelsMatchEveryModelInputChannel(int cropX, int cropY, int cropSize)
+    [InlineData(80, 0, 640, 640)]
+    [InlineData(240, 160, 320, 320)]
+    [InlineData(0, 80, 800, 480)]
+    [InlineData(240, 0, 320, 640)]
+    public void SnapshotPixelsMatchEveryModelInputChannel(int cropX, int cropY, int cropWidth, int cropHeight)
     {
         using var frame = CreateFrame();
-        var geometry = new PreviewGeometry(cropX, cropY, cropSize, 1, 0, 0);
-        var input = YoloInferenceEngine.Preprocess(frame, geometry, true, out var pixels);
+        var geometry = new PreviewGeometry(cropX, cropY, cropWidth, cropHeight, 1, 0, 0);
+        var (input, _, pixels) = new YoloPreprocessor().Preprocess(frame, geometry, true);
         Assert.NotNull(pixels);
 
         using var snapshot = new InferenceSnapshot(Array.Empty<Detection>(), pixels);
@@ -33,7 +35,7 @@ public sealed class InferenceSnapshotTests
             Assert.Equal((byte)255, actual[i * 4 + 3]);
         }
 
-        if (cropSize == 640)
+        if (cropWidth == 640 && cropHeight == 640)
         {
             Assert.Equal((byte)cropX, actual[2]);
             Assert.Equal((byte)cropY, actual[1]);
@@ -46,13 +48,16 @@ public sealed class InferenceSnapshotTests
     public void StreamingDoesNotAllocateSnapshotPixels()
     {
         using var frame = CreateFrame();
-        var geometry = new PreviewGeometry(80, 0, 640, 1, 0, 0);
-        var streaming = YoloInferenceEngine.Preprocess(frame, geometry, false, out var streamingPixels);
-        var oneShot = YoloInferenceEngine.Preprocess(frame, geometry, true, out var oneShotPixels);
+        var geometry = new PreviewGeometry(80, 0, 640, 640, 1, 0, 0);
+        var preprocessor = new YoloPreprocessor();
+        var streaming = preprocessor.Preprocess(frame, geometry, false);
+        var savedTensor = streaming.Tensor.ToArray();
+        var oneShot = preprocessor.Preprocess(frame, geometry, true);
 
-        Assert.Null(streamingPixels);
-        Assert.NotNull(oneShotPixels);
-        Assert.Equal(oneShot, streaming);
+        Assert.Null(streaming.ImagePixels);
+        Assert.NotNull(oneShot.ImagePixels);
+        Assert.Equal(savedTensor, oneShot.Tensor);
+        Assert.Equal(streaming.Letterbox, oneShot.Letterbox);
     }
 
     [Fact]
@@ -61,13 +66,11 @@ public sealed class InferenceSnapshotTests
         byte[] pixels;
         using (var frame = CreateFrame())
         {
-            YoloInferenceEngine.Preprocess(frame, new PreviewGeometry(80, 0, 640, 1, 0, 0),
-                true, out var capturedPixels);
-            pixels = capturedPixels!;
+            pixels = new YoloPreprocessor().Preprocess(
+                frame, new PreviewGeometry(80, 0, 640, 640, 1, 0, 0), true).ImagePixels!;
         }
 
-        var detection = YoloInferenceEngine.DecodeDetection(160, 80, 480, 400, .8f, 0, new[] { "person" });
-        Assert.NotNull(detection);
+        var detection = new Detection(0, "person", .8f, new DetectionBox(.25f, .125f, .5f, .5f));
         IReadOnlyList<Detection> detections = Array.AsReadOnly(new[] { detection });
         using var snapshot = new InferenceSnapshot(detections, pixels);
         Array.Clear(pixels);

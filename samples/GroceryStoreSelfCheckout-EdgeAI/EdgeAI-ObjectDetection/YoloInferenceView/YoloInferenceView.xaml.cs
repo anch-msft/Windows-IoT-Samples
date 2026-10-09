@@ -33,7 +33,13 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     private bool _disposeRequested;
     private long _geometryVersion;
     private PreviewGeometry? _geometry;
-    private IReadOnlyList<Detection> _detections = Array.Empty<Detection>();
+    private PipelineResult? _displayedResult;
+    private readonly RectangleGeometry _viewportClip = new();
+    private readonly RectangleGeometry _overlayClip = new();
+    private readonly SolidColorBrush _detectionBrush = new(Colors.LimeGreen);
+    private readonly List<(XamlRectangle Box, TextBlock Label)> _overlayElements = new();
+    private Rect? _cameraBounds;
+    private Rect? _stillBounds;
 
     public YoloInferenceState State
     {
@@ -98,6 +104,8 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     public YoloInferenceView()
     {
         InitializeComponent();
+        Viewport.Clip = _viewportClip;
+        Overlay.Clip = _overlayClip;
         ApplyPresentation();
         Loaded += (_, _) =>
         {
@@ -281,6 +289,11 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             }
             finally
             {
+                if (dispose)
+                {
+                    Overlay.Children.Clear();
+                    _overlayElements.Clear();
+                }
                 SetState(dispose ? YoloInferenceState.Disposed : YoloInferenceState.Stopped);
             }
         }
@@ -428,9 +441,9 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                Stopwatch cycle = Stopwatch.StartNew();
+                long cycleStarted = Stopwatch.GetTimestamp();
                 await ProcessFrameAsync(token);
-                double remaining = 1000 / _settings!.MaxEndToEndFps - cycle.Elapsed.TotalMilliseconds;
+                double remaining = 1000 / _settings!.MaxEndToEndFps - Stopwatch.GetElapsedTime(cycleStarted).TotalMilliseconds;
                 await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1, remaining)), token);
             }
         }
@@ -471,7 +484,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
 
     private void PresentResult(PipelineResult result)
     {
-        _detections = result.Detections;
+        _displayedResult = result;
         DrawDetections();
         TimeSpan endToEndTime = Stopwatch.GetElapsedTime(result.StartedAt);
         TimingText.Text = $"Inference: {result.InferenceTime.TotalMilliseconds:F0} ms";
@@ -558,8 +571,8 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         _geometry = null;
         if (StillFrame.Source is null)
         {
-            _detections = Array.Empty<Detection>();
-            Overlay.Children.Clear();
+            _displayedResult = null;
+            SetOverlayCount(0);
         }
     }
 
@@ -567,10 +580,11 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     {
         double width = Viewport.ActualWidth;
         double height = Viewport.ActualHeight;
-        Viewport.Clip = new RectangleGeometry
+        Rect viewportBounds = new(0, 0, width, height);
+        if (_viewportClip.Rect != viewportBounds)
         {
-            Rect = new Rect(0, 0, width, height)
-        };
+            _viewportClip.Rect = viewportBounds;
+        }
         if (width < 1 || height < 1 || _pipeline?.FrameSource is null)
         {
             if (_geometry is not null)
@@ -607,73 +621,120 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             _geometry = geometry;
         }
         // Explicit placement keeps preview and crop math identical, including None at high DPI.
-        CameraPreview.Width = sourceWidth * scale;
-        CameraPreview.Height = sourceHeight * scale;
-        Canvas.SetLeft(CameraPreview, geometry.ImageX);
-        Canvas.SetTop(CameraPreview, geometry.ImageY);
+        Rect cameraBounds = new(geometry.ImageX, geometry.ImageY, sourceWidth * scale, sourceHeight * scale);
+        if (_cameraBounds != cameraBounds)
+        {
+            SetBounds(CameraPreview, cameraBounds);
+            _cameraBounds = cameraBounds;
+        }
     }
 
     private void DrawDetections()
     {
-        Overlay.Children.Clear();
+        if (_displayedResult is not { } result)
+        {
+            SetOverlayCount(0);
+            return;
+        }
         PreviewGeometry? displayGeometry = _geometry;
-        if (StillFrame.Source is not null)
+        bool showingStill = StillFrame.Source is not null;
+        if (showingStill)
         {
             if (Viewport.ActualWidth <= 0 || Viewport.ActualHeight <= 0)
             {
+                SetOverlayCount(0);
                 return;
             }
             displayGeometry = PreviewGeometry.FitSquare(YoloInferenceEngine.InputSize,
                 Viewport.ActualWidth, Viewport.ActualHeight);
-            StillFrame.Width = displayGeometry.Value.OverlaySize;
-            StillFrame.Height = displayGeometry.Value.OverlaySize;
-            Canvas.SetLeft(StillFrame, displayGeometry.Value.OverlayX);
-            Canvas.SetTop(StillFrame, displayGeometry.Value.OverlayY);
+            Rect stillBounds = new(displayGeometry.Value.OverlayX, displayGeometry.Value.OverlayY,
+                displayGeometry.Value.OverlayWidth, displayGeometry.Value.OverlayHeight);
+            if (_stillBounds != stillBounds)
+            {
+                SetBounds(StillFrame, stillBounds);
+                _stillBounds = stillBounds;
+            }
         }
         if (displayGeometry is not { } geometry)
         {
+            SetOverlayCount(0);
             return;
         }
-        Overlay.Clip = new RectangleGeometry
+        Rect overlayBounds = new(geometry.OverlayX, geometry.OverlayY, geometry.OverlayWidth, geometry.OverlayHeight);
+        if (_overlayClip.Rect != overlayBounds)
         {
-            Rect = new Rect(geometry.OverlayX, geometry.OverlayY, geometry.OverlaySize, geometry.OverlaySize)
-        };
+            _overlayClip.Rect = overlayBounds;
+        }
 
-        SolidColorBrush brush = new(Colors.LimeGreen);
-        foreach (Detection detection in _detections)
+        bool showBoxes = ShowBoundingBoxes;
+        bool showLabels = ShowLabels;
+        bool showConfidence = ShowConfidence;
+        bool showLabel = showLabels || showConfidence;
+        int count = showBoxes || showLabel ? result.Detections.Count : 0;
+        SetOverlayCount(count);
+        for (int index = 0; index < count; index++)
         {
+            var elements = _overlayElements[index];
+            Detection detection = result.Detections[index];
             DetectionBox box = detection.BoundingBox;
-            double x = geometry.OverlayX + box.X * geometry.OverlaySize;
-            double y = geometry.OverlayY + box.Y * geometry.OverlaySize;
-            if (ShowBoundingBoxes)
+            if (!showingStill)
             {
-                XamlRectangle rectangle = new()
-                {
-                    Width = box.Width * geometry.OverlaySize,
-                    Height = box.Height * geometry.OverlaySize,
-                    Stroke = brush,
-                    StrokeThickness = 2
-                };
-                Canvas.SetLeft(rectangle, x);
-                Canvas.SetTop(rectangle, y);
-                Overlay.Children.Add(rectangle);
+                box = result.Letterbox.ToCropBox(box);
             }
-            if (ShowLabels || ShowConfidence)
+            double x = geometry.OverlayX + box.X * geometry.OverlayWidth;
+            double y = geometry.OverlayY + box.Y * geometry.OverlayHeight;
+            elements.Box.Visibility = showBoxes ? Visibility.Visible : Visibility.Collapsed;
+            if (showBoxes)
             {
-                TextBlock label = new()
+                SetBounds(elements.Box, new Rect(x, y, box.Width * geometry.OverlayWidth,
+                    box.Height * geometry.OverlayHeight));
+            }
+            elements.Label.Visibility = showLabel ? Visibility.Visible : Visibility.Collapsed;
+            if (showLabel)
+            {
+                TextBlock label = elements.Label;
+                string text = showLabels
+                    ? (showConfidence ? $"{detection.Label} {detection.Confidence:P0}" : detection.Label)
+                    : $"{detection.Confidence:P0}";
+                if (label.Text != text)
                 {
-                    Text = ShowLabels
-                        ? (ShowConfidence ? $"{detection.Label} {detection.Confidence:P0}" : detection.Label)
-                        : $"{detection.Confidence:P0}",
-                    Foreground = brush,
-                    FontSize = 14,
-                    MaxWidth = Math.Max(0, geometry.OverlayX + geometry.OverlaySize - x),
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                };
+                    label.Text = text;
+                }
+                label.MaxWidth = Math.Max(0, geometry.OverlayX + geometry.OverlayWidth - x);
                 Canvas.SetLeft(label, x);
                 Canvas.SetTop(label, Math.Max(geometry.OverlayY, y - 20));
-                Overlay.Children.Add(label);
             }
         }
+    }
+
+    private void SetOverlayCount(int count)
+    {
+        while (_overlayElements.Count < count)
+        {
+            XamlRectangle rectangle = new() { Stroke = _detectionBrush, StrokeThickness = 2 };
+            TextBlock label = new()
+            {
+                Foreground = _detectionBrush,
+                FontSize = 14,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            _overlayElements.Add((rectangle, label));
+            Overlay.Children.Add(rectangle);
+            Overlay.Children.Add(label);
+        }
+        for (int index = count; index < _overlayElements.Count; index++)
+        {
+            var elements = _overlayElements[index];
+            elements.Box.Visibility = Visibility.Collapsed;
+            elements.Label.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static void SetBounds(FrameworkElement element, Rect bounds)
+    {
+        element.Width = bounds.Width;
+        element.Height = bounds.Height;
+        Canvas.SetLeft(element, bounds.X);
+        Canvas.SetTop(element, bounds.Y);
     }
 }

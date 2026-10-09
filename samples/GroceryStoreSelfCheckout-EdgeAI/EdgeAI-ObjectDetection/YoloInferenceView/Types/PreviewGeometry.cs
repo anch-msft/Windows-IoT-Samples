@@ -6,20 +6,20 @@ using System;
 namespace EdgeAI_ObjectDetection.Controls;
 
 /// <summary>
-/// Describes a centered square crop of the camera frame and how it appears in the preview.
-/// <see cref="CropX"/>, <see cref="CropY"/>, and <see cref="CropSize"/> are in source-frame pixels.
+/// Describes the visible rectangular crop of the camera frame and its preview placement.
+/// Crop coordinates and dimensions are in source-frame pixels.
 /// <see cref="Scale"/> converts source pixels to layout units; <see cref="ImageX"/> and
 /// <see cref="ImageY"/> give the full frame's top-left relative to the viewport's top-left.
-/// <see cref="OverlayX"/>, <see cref="OverlayY"/>, and <see cref="OverlaySize"/> give the crop's
-/// rectangle in overlay layout coordinates, derived from the crop and full-frame transform.
+/// Overlay coordinates and dimensions describe the crop in layout units.
 /// </summary>
 internal readonly record struct PreviewGeometry(
-    int CropX, int CropY, int CropSize,
+    int CropX, int CropY, int CropWidth, int CropHeight,
     double Scale, double ImageX, double ImageY)
 {
     public double OverlayX => ImageX + CropX * Scale;
     public double OverlayY => ImageY + CropY * Scale;
-    public double OverlaySize => CropSize * Scale;
+    public double OverlayWidth => CropWidth * Scale;
+    public double OverlayHeight => CropHeight * Scale;
 
     public static PreviewGeometry FitSquare(int imageSize, double viewportWidth, double viewportHeight)
     {
@@ -30,7 +30,7 @@ internal readonly record struct PreviewGeometry(
         }
 
         double size = Math.Min(viewportWidth, viewportHeight);
-        return new(0, 0, imageSize, size / imageSize,
+        return new(0, 0, imageSize, imageSize, size / imageSize,
             (viewportWidth - size) / 2, (viewportHeight - size) / 2);
     }
 
@@ -51,13 +51,11 @@ internal readonly record struct PreviewGeometry(
         int top = (int)Math.Ceiling(Math.Max(0, -imageY / scale));
         int right = (int)Math.Floor(Math.Min(sourceWidth, (viewportWidth - imageX) / scale));
         int bottom = (int)Math.Floor(Math.Min(sourceHeight, (viewportHeight - imageY) / scale));
-        int size = Math.Min(right - left, bottom - top);
-        if (size <= 0)
+        if (right <= left || bottom <= top)
         {
             throw new ArgumentOutOfRangeException(nameof(viewportWidth), "Preview must contain at least one source pixel.");
         }
 
-        return new(left + (right - left - size) / 2, top + (bottom - top - size) / 2,
-            size, scale, imageX, imageY);
+        return new(left, top, right - left, bottom - top, scale, imageX, imageY);
     }
 }

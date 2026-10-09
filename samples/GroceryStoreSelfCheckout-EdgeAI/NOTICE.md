@@ -2,6 +2,8 @@ NOTICES
 
 This repository incorporates material as listed below or described in the code.
 
+The ImageSharp dependency below is used by EdgeAIKiosk, not EdgeAI-ObjectDetection.
+
 SixLabors.ImageSharp 3.1.12
 Six Labors Split License
 Version 1.0, June 2022

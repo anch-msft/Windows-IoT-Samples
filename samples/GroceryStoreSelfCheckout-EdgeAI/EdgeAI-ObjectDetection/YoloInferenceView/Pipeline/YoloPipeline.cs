@@ -21,6 +21,7 @@ internal sealed class YoloPipeline : IAsyncDisposable
     private MediaFrameReader? _reader;
     private bool _readerStarted;
     private YoloInferenceEngine? _engine;
+    private readonly YoloPreprocessor _preprocessor = new();
     private TimeSpan? _lastFrameTime;
     public event EventHandler<InferenceFaultedEventArgs>? Faulted;
     public MediaFrameSource? FrameSource
@@ -88,13 +89,13 @@ internal sealed class YoloPipeline : IAsyncDisposable
             return null; // A format change will be picked up by the next layout snapshot.
         }
 
-        float[] input = YoloInferenceEngine.Preprocess(bitmap, geometry, captureImage, out byte[]? imagePixels);
+        PreprocessedFrame input = _preprocessor.Preprocess(bitmap, geometry, captureImage);
         token.ThrowIfCancellationRequested();
-        Stopwatch inference = Stopwatch.StartNew();
+        long inferenceStarted = Stopwatch.GetTimestamp();
         IReadOnlyList<Detection> detections = _engine!.Run(input);
-        inference.Stop();
+        TimeSpan inferenceTime = Stopwatch.GetElapsedTime(inferenceStarted);
         token.ThrowIfCancellationRequested();
-        return new(detections, inference.Elapsed, startedAt, imagePixels);
+        return new(detections, inferenceTime, startedAt, input.Letterbox, input.ImagePixels);
     }
 
     public async ValueTask DisposeAsync()
@@ -137,4 +138,5 @@ internal sealed class YoloPipeline : IAsyncDisposable
 }
 
 internal sealed record PipelineResult(
-    IReadOnlyList<Detection> Detections, TimeSpan InferenceTime, long StartedAt, byte[]? ImagePixels);
+    IReadOnlyList<Detection> Detections, TimeSpan InferenceTime, long StartedAt,
+    LetterboxGeometry Letterbox, byte[]? ImagePixels);
