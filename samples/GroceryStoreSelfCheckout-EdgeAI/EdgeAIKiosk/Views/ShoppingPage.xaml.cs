@@ -6,11 +6,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
-using EdgeAIKiosk.Models;
-using EdgeAIKiosk.Services;
-using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Pipeline;
-using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 

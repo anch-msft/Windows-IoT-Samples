@@ -5,9 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
-using EdgeAIKiosk.Interfaces;
-using EdgeAIKiosk.Models;
-using EdgeAIKiosk.Pipeline;
 
 namespace EdgeAIKiosk.Services;
 

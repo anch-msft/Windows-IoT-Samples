@@ -13,6 +13,7 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.Windows.AI.MachineLearning;
 using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 using Windows.Media.Playback;
 using Windows.Media.Core;
