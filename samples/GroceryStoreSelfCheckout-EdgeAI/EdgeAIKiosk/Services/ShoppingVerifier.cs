@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Windows.Graphics.Imaging;
 using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Models;
 using EdgeAIKiosk.Pipeline;
@@ -27,27 +28,20 @@ public sealed class ShoppingVerifier(
     /// <param name="scannedItems">The cart items collected from barcode scans before checkout.</param>
     public async Task<VerificationResult> Verify(List<ScannedItem> scannedItems)
     {
-        this.ResetTracker();
-        await this.RunInferenceFrames();
-        return BuildVerificationResult(scannedItems, this._tracker.Track([]));
-    }
-
-    private void ResetTracker() =>
-        this._tracker.Track([], reset: true);
-
-    /// <summary>Samples camera frames and feeds each successful model output into the tracker.</summary>
-    private async Task RunInferenceFrames()
-    {
-        // Sample multiple frames so the tracker can smooth detections.
+        _tracker.Track([], reset: true);
         for (int i = 0; i < FrameCount; i++)
         {
-            var frame = await this._imageCapture.CaptureFrame();
-            if (frame is null) continue;
+            SoftwareBitmap? frame = await _imageCapture.CaptureFrame();
+            if (frame is null)
+            {
+                continue;
+            }
 
-            // Preprocess, infer, then accumulate detections.
-            var output = await this._modelLoader.RunInference(this._preprocessor.Preprocess(frame));
-            this._tracker.Track(output.Detections);
+            ModelInput input = _preprocessor.Preprocess(frame);
+            ModelOutput output = await _modelLoader.RunInference(input);
+            _tracker.Track(output.Detections);
         }
+        return BuildVerificationResult(scannedItems, _tracker.Track([]));
     }
 
     /// <summary>Builds the final mismatch result from scanned cart items and tracked camera detections.</summary>
@@ -59,15 +53,18 @@ public sealed class ShoppingVerifier(
     {
         // The demo only compares labels that the selected model/classes can actually detect;
         // other scanned products need barcode/POS data, not camera verification.
-        var scannedLabels = new HashSet<string>(scanned.Select(item => item.Name).Where(VerificationLabels.LabelsToVerify.Contains));
-        var detectedLabels = new HashSet<string>(detected.Select(item => item.Label).Where(VerificationLabels.LabelsToVerify.Contains));
+        HashSet<string> scannedLabels = new(scanned.Select(item => item.Name).Where(KioskSettings.AcceptedLabels.Contains));
+        HashSet<string> detectedLabels = new(detected.Select(item => item.Label).Where(KioskSettings.AcceptedLabels.Contains));
 
         // A mismatch is anything present in only one side.
-        var scannedOnly = scannedLabels.Except(detectedLabels);
-        var detectedOnly = detectedLabels.Except(scannedLabels);
-        var mismatches = scannedOnly.Concat(detectedOnly).Distinct().ToList();
+        IEnumerable<string> scannedOnly = scannedLabels.Except(detectedLabels);
+        IEnumerable<string> detectedOnly = detectedLabels.Except(scannedLabels);
+        List<string> mismatches = scannedOnly.Concat(detectedOnly).Distinct().ToList();
         return new VerificationResult(mismatches.Count == 0, scanned, detected, mismatches);
     }
 
-    public void Dispose() => this._modelLoader.Dispose();
+    public void Dispose()
+    {
+        _modelLoader.Dispose();
+    }
 }
