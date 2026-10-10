@@ -68,16 +68,16 @@ EdgeAIKiosk\
   App.xaml                         App startup and shared resources
   Configuration\KioskSettings.cs  Runtime model, hardware, camera, and label selections
   Styles\KioskStyles.xaml          Shared brushes, spacing, typography, and control styles
-  Views\HomeWindow.xaml            Model, hardware, camera, and label selection
-  Views\ShoppingView.xaml          Barcode input, cart UI, camera preview, checkout
-  Views\AlertWindow.xaml           Verification result UI
+  Views\MainWindow.xaml            Persistent window and navigation frame
+  Views\HomePage.xaml              Model, hardware, camera, and label selection
+  Views\ShoppingPage.xaml          Barcode input, cart UI, camera preview, checkout
+  Views\AlertPage.xaml             Verification result UI
   Pipeline\ImageCapture.cs         WinRT camera preview and frame capture
   Pipeline\Yolo26Preprocessor.cs   SoftwareBitmap to 640x640 tensor conversion
   Pipeline\Yolo26SnapdragonXLoader.cs
                                    Windows ML session selection and YOLO output parsing
   Pipeline\MajorityFrames.cs       Multi-frame confidence/count gate
   Services\ShoppingVerifier.cs     Compares scanned cart labels with detected labels
-  Services\VerifierFactory.cs      Wires capture, preprocessing, model, and tracking
   DataModels\                      Cart, detection, model input/output, and result types
   Models\                          Local ONNX model files; not committed to Git
 
@@ -147,16 +147,20 @@ Configuration is currently in code and through the home-screen settings UI:
 
 Checkout verification is intentionally split into small pipeline stages:
 
-1. `ShoppingView` collects scanned items and owns the live camera preview.
+1. `ShoppingPage` collects scanned items and owns the live camera preview.
 2. `ImageCapture` starts `MediaCapture`, reads color frames, and returns `SoftwareBitmap` frames.
 3. `Yolo26Preprocessor` converts frames to ImageSharp RGB images, letterboxes them to 640x640, writes CHW tensor data, and stores scale/padding metadata.
 4. `Yolo26SnapdragonXLoader` runs the ONNX model on the selected Windows ML hardware. Auto tries NPU, GPU, then CPU; an explicit choice uses only that hardware type.
 5. `MajorityFrames` filters detections by confidence and observation count.
 6. `ShoppingVerifier` compares verified detected labels with the scanned cart labels.
-7. `AlertWindow` shows the pass/fail result and mismatch details.
+7. `AlertPage` shows the pass/fail result and mismatch details.
 
 ### Design Notes
 
+- One `MainWindow` hosts a `Frame` for the home, shopping, and result pages. Navigation replaces page content without closing/recreating the native window or animating through a blank background. Navigation history is disabled so completed checkout sessions cannot be revisited.
+- Pages initialize screen/session state in `OnNavigatedTo`; `Loaded` only applies keyboard focus or resumes the attached result preview. Reattaching a page's visual tree does not recreate its scanner or restart model loading. Navigation does not await async initialization, so checkout remains disabled until startup finishes.
+- The label dialog uses WinUI `ItemsView` with multiple selection and a uniform grid. Save reads selected data items; Cancel discards edits when the dialog is reopened. XAML child order defines overlay stacking without explicit Z-index values.
+- Shopping pauses inference before transferring the shared preview to the result page. Success and returning home await inference cleanup; application exit is not deferred for cleanup.
 - Camera capture uses WinRT `MediaCapture` and `MediaFrameReader` because OpenCvSharp does not provide a reliable `win-arm64` native path for this target.
 - Preprocessing uses ImageSharp after frames are converted from `SoftwareBitmap`, then preserves letterbox padding and scale so detections can be mapped back to camera-frame coordinates.
 - The app uses async camera initialization because WinRT camera APIs are async-first.
