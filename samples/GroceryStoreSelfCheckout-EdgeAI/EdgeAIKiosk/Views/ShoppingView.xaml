@@ -27,7 +27,19 @@
             Grid.Column="0"
             Background="{StaticResource KioskBlackBrush}"
             CornerRadius="{StaticResource KioskPanelCornerRadius}">
-            <ContentControl x:Name="LiveInferenceHost" />
+            <Grid>
+                <ContentControl x:Name="LiveInferenceHost"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+                <Grid HorizontalAlignment="Left" VerticalAlignment="Top"
+                      Margin="{StaticResource KioskInferencePanelMargin}"
+                      Style="{StaticResource KioskInferenceOverlayStyle}"
+                      IsHitTestVisible="False">
+                    <TextBlock x:Name="DetectedCountTextBlock"
+                               Text="Detected: starting inference"
+                               Style="{StaticResource KioskInferenceTextStyle}" />
+                </Grid>
+            </Grid>
         </Border>
         <Button
             Grid.Row="1"
@@ -61,6 +73,7 @@
             Grid.Row="1"
             Grid.Column="2"
             x:Name="PayNowButton"
+            IsEnabled="False"
             Content="Pay Now"
             FontSize="{StaticResource KioskFontSizeButton}"
             Background="{StaticResource KioskSuccessBrush}"

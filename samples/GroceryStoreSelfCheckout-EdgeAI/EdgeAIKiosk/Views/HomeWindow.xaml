@@ -133,7 +133,6 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
@@ -143,26 +142,13 @@
                         FontSize="{StaticResource KioskFontSizeDialogTitle}"
                         Margin="{StaticResource KioskDialogSectionMargin}"
                         Style="{StaticResource KioskWhiteBoldTextStyle}" />
-                    <StackPanel
-                        Grid.Row="1"
-                        Spacing="{StaticResource KioskSpacingSmall}"
-                        Margin="{StaticResource KioskDialogSectionMargin}">
-                        <TextBlock
-                            Text="Label Type"
-                            FontSize="{StaticResource KioskFontSizeLabel}"
-                            Style="{StaticResource KioskWhiteSemiBoldTextStyle}" />
-                        <ComboBox
-                            x:Name="LabelTypeComboBox"
-                            DisplayMemberPath="Name"
-                            HorizontalAlignment="Stretch" />
-                    </StackPanel>
-                    <ScrollViewer Grid.Row="2" MaxHeight="400">
+                    <ScrollViewer Grid.Row="1" MaxHeight="400">
                         <StackPanel
                             x:Name="LabelsStackPanel"
                             Spacing="{StaticResource KioskSpacingSmall}" />
                     </ScrollViewer>
                     <StackPanel
-                        Grid.Row="3"
+                        Grid.Row="2"
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Spacing="{StaticResource KioskSpacingMedium}"

@@ -1,3 +1,5 @@
+using EdgeAI_ObjectDetection.Controls;
+using EdgeAI_ObjectDetection.Pipeline;
 using EdgeAIKiosk.Services;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.UI.Xaml;
@@ -6,19 +8,28 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.Windows.AI.MachineLearning;
 using System;
 using System.Collections.Generic;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Windows.Media.Devices;
+using Windows.Media.Capture.Frames;
 
 namespace EdgeAIKiosk.Views;
 
 public sealed partial class HomeWindow : Window
 {
-    public HomeWindow()
+    private readonly KioskSettings _settings;
+    private bool _optionsLoaded;
+
+    public HomeWindow() : this(new KioskSettings())
     {
+    }
+
+    internal HomeWindow(KioskSettings settings)
+    {
+        _settings = settings;
         InitializeComponent();
         WindowLayout.Maximize(this);
     }
@@ -32,27 +43,30 @@ public sealed partial class HomeWindow : Window
         LoadModelOptions();
         await LoadHardwareOptions();
         await LoadCameraOptions();
-        StartNowButton.IsEnabled = true;
+        _optionsLoaded = true;
+        UpdateStartButton();
     }
 
     private void LoadScannerOptions()
     {
-        var options = new List<ScannerPickerOption>
+        List<ScannerPickerOption> options = new()
         {
             new("HID Barcode Scanner", ScannerMode.HidScanner),
             new("Keyboard Mode", ScannerMode.Keyboard)
         };
         ScannerPickerComboBox.ItemsSource = options;
-        ScannerPickerComboBox.SelectedItem = options.FirstOrDefault(o => o.Value == KioskSettings.ScannerMode) ?? options[0];
+        ScannerPickerComboBox.SelectedItem = options.FirstOrDefault(o => o.Value == _settings.ScannerMode) ?? options[0];
     }
 
     private void LoadModelOptions()
     {
-        var modelOptions = Directory.GetFiles(Path.Combine(System.AppContext.BaseDirectory, "Models"), "*.onnx")
+        string modelDirectory = Path.Combine(AppContext.BaseDirectory, "Models");
+        List<PickerOption> modelOptions = (Directory.Exists(modelDirectory) ? Directory.GetFiles(modelDirectory, "*.onnx") : [])
             .Select(path => new PickerOption(Path.GetFileName(path), Path.Combine("Models", Path.GetFileName(path))))
             .ToList();
         ModelPickerComboBox.ItemsSource = modelOptions;
-        ModelPickerComboBox.SelectedItem = FindSelectedOption(modelOptions, KioskSettings.ModelFileName);
+        ModelPickerComboBox.SelectedItem = FindSelectedOption(modelOptions, _settings.ModelFileName);
+        ModelPickerComboBox.SelectionChanged += (_, _) => UpdateStartButton();
     }
 
     private static PickerOption? FindSelectedOption(IReadOnlyList<PickerOption> options, string? selectedValue) =>
@@ -62,15 +76,15 @@ public sealed partial class HomeWindow : Window
     {
         try { await ExecutionProviderCatalog.GetDefault().EnsureAndRegisterCertifiedAsync(); }
         catch (COMException exception) { Trace.TraceWarning($"Windows ML provider registration failed: {exception.Message}"); }
-        var options = BuildHardwareOptions(OrtEnv.Instance().GetEpDevices().Select(device => device.HardwareDevice.Type));
+        List<HardwarePickerOption> options = BuildHardwareOptions(OrtEnv.Instance().GetEpDevices().Select(device => device.HardwareDevice.Type));
         HardwarePickerComboBox.ItemsSource = options;
-        HardwarePickerComboBox.SelectedItem = options.FirstOrDefault(option => option.Value == KioskSettings.PreferredHardware) ?? options[0];
+        HardwarePickerComboBox.SelectedItem = options.FirstOrDefault(option => option.Value == _settings.PreferredHardware) ?? options[0];
     }
 
     internal static List<HardwarePickerOption> BuildHardwareOptions(IEnumerable<OrtHardwareDeviceType> availableHardware)
     {
-        var available = availableHardware.ToHashSet();
-        var detected = new[] { OrtHardwareDeviceType.CPU, OrtHardwareDeviceType.GPU, OrtHardwareDeviceType.NPU }
+        HashSet<OrtHardwareDeviceType> available = availableHardware.ToHashSet();
+        IEnumerable<HardwarePickerOption> detected = new[] { OrtHardwareDeviceType.CPU, OrtHardwareDeviceType.GPU, OrtHardwareDeviceType.NPU }
             .Where(available.Contains)
             .Select(hardware => new HardwarePickerOption(hardware.ToString(), hardware));
         return [new("Auto", null), .. detected];
@@ -78,10 +92,24 @@ public sealed partial class HomeWindow : Window
 
     private async Task LoadCameraOptions()
     {
-        var devices = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(MediaDevice.GetVideoCaptureSelector());
-        var cameraOptions = devices.Select(device => new PickerOption(device.Name, device.Id)).ToList();
+        IReadOnlyList<MediaFrameSourceGroup> groups = await MediaFrameSourceGroup.FindAllAsync();
+        List<CameraPickerOption> cameraOptions = groups.Where(group => group.SourceInfos.Any(YoloPipeline.IsColorVideoSource))
+            .Select(group => new CameraPickerOption(group.DisplayName, group)).ToList();
         CameraPickerComboBox.ItemsSource = cameraOptions;
-        CameraPickerComboBox.SelectedItem = FindSelectedOption(cameraOptions, KioskSettings.CameraDeviceId) ?? cameraOptions.FirstOrDefault();
+        CameraPickerComboBox.SelectedItem = cameraOptions.FirstOrDefault(option => option.Group.Id == _settings.CameraGroupId)
+            ?? cameraOptions.FirstOrDefault();
+        CameraPickerComboBox.SelectionChanged += (_, _) => UpdateStartButton();
+    }
+
+    private void UpdateStartButton()
+    {
+        if (!_optionsLoaded) return;
+        bool hasModel = ModelPickerComboBox.SelectedItem is PickerOption;
+        bool hasCamera = CameraPickerComboBox.SelectedItem is CameraPickerOption;
+        StartNowButton.IsEnabled = hasModel && hasCamera;
+        StartupErrorTextBlock.Text = !hasModel ? "Copy a compatible ONNX model into the Models folder and restart."
+            : !hasCamera ? "No compatible color camera was found. Connect a camera and restart." : string.Empty;
+        StartupErrorTextBlock.Visibility = StartNowButton.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void ShowStartupError(string message)
@@ -96,11 +124,14 @@ public sealed partial class HomeWindow : Window
     /// </summary>
     private void OnStartNowClick(object sender, RoutedEventArgs e)
     {
-        KioskSettings.ScannerMode = ((ScannerPickerOption)ScannerPickerComboBox.SelectedItem).Value;
-        KioskSettings.ModelFileName = ((PickerOption)ModelPickerComboBox.SelectedItem).Value;
-        KioskSettings.PreferredHardware = ((HardwarePickerOption)HardwarePickerComboBox.SelectedItem).Value;
-        KioskSettings.CameraDeviceId = ((PickerOption?)CameraPickerComboBox.SelectedItem)?.Value;
-        new ShoppingView().Activate();
+        _settings.ScannerMode = ((ScannerPickerOption)ScannerPickerComboBox.SelectedItem).Value;
+        _settings.ModelFileName = ((PickerOption)ModelPickerComboBox.SelectedItem).Value;
+        _settings.PreferredHardware = ((HardwarePickerOption)HardwarePickerComboBox.SelectedItem).Value;
+        MediaFrameSourceGroup camera = ((CameraPickerOption)CameraPickerComboBox.SelectedItem).Group;
+        _settings.CameraGroupId = camera.Id;
+        KioskInferenceOptions options = new(Path.Combine(AppContext.BaseDirectory, _settings.ModelFileName),
+            camera, _settings.PreferredHardware, _settings.AcceptedLabels.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+        new ShoppingView(_settings, options).Activate();
         Close();
     }
 
@@ -127,22 +158,14 @@ public sealed partial class HomeWindow : Window
 
     private void OnEditLabelsClick(object sender, RoutedEventArgs e)
     {
-        PopulateLabelTypeOptions();
         PopulateLabelCheckboxes();
         LabelDialogOverlay.Visibility = Visibility.Visible;
-    }
-
-    private void PopulateLabelTypeOptions()
-    {
-        var labelTypeOptions = new List<PickerOption> { new("CocoLabels", "CocoLabels") };
-        LabelTypeComboBox.ItemsSource = labelTypeOptions;
-        LabelTypeComboBox.SelectedItem = FindSelectedOption(labelTypeOptions, KioskSettings.LabelTypeName);
     }
 
     private void PopulateLabelCheckboxes()
     {
         LabelsStackPanel.Children.Clear();
-        foreach (var labelRow in CocoLabels.Labels.Chunk(3))
+        foreach (string[] labelRow in YoloInferenceView.GetSupportedClasses().Chunk(3))
         {
             LabelsStackPanel.Children.Add(BuildLabelRow(labelRow));
         }
@@ -153,20 +176,20 @@ public sealed partial class HomeWindow : Window
     /// </summary>
     private StackPanel BuildLabelRow(IEnumerable<string> labels)
     {
-        var row = new StackPanel();
+        StackPanel row = new();
         row.Orientation = Orientation.Horizontal;
         row.Spacing = 8;
-        foreach (var label in labels) row.Children.Add(BuildLabelCheckBox(label));
+        foreach (string label in labels) row.Children.Add(BuildLabelCheckBox(label));
         return row;
     }
 
     private CheckBox BuildLabelCheckBox(string label)
     {
-        var checkBox = new CheckBox();
+        CheckBox checkBox = new();
         checkBox.Content = label;
         checkBox.Tag = label;
         checkBox.Width = 180;
-        checkBox.IsChecked = KioskSettings.AcceptedLabels.Contains(label);
+        checkBox.IsChecked = _settings.AcceptedLabels.Contains(label);
         checkBox.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
         return checkBox;
     }
@@ -175,13 +198,12 @@ public sealed partial class HomeWindow : Window
         LabelDialogOverlay.Visibility = Visibility.Collapsed;
 
     /// <summary>
-    /// Persists the selected label type and checked labels, then closes the dialog.
+    /// Persists the checked labels, then closes the dialog.
     /// </summary>
     private void OnSaveLabelsClick(object sender, RoutedEventArgs e)
     {
-        KioskSettings.LabelTypeName = ((PickerOption)LabelTypeComboBox.SelectedItem).Value;
-        var selectedLabels = LabelsStackPanel.Children.OfType<StackPanel>().SelectMany(LabelCheckboxesInRow).Where(IsChecked).Select(LabelFromCheckBox);
-        KioskSettings.AcceptedLabels = new HashSet<string>(selectedLabels, StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> selectedLabels = LabelsStackPanel.Children.OfType<StackPanel>().SelectMany(LabelCheckboxesInRow).Where(IsChecked).Select(LabelFromCheckBox);
+        _settings.AcceptedLabels = new HashSet<string>(selectedLabels, StringComparer.OrdinalIgnoreCase);
         LabelDialogOverlay.Visibility = Visibility.Collapsed;
     }
 
@@ -195,6 +217,7 @@ public sealed partial class HomeWindow : Window
         (string)checkBox.Tag;
 
     private sealed record PickerOption(string Name, string Value);
+    private sealed record CameraPickerOption(string Name, MediaFrameSourceGroup Group);
     internal sealed record HardwarePickerOption(string Name, OrtHardwareDeviceType? Value);
     private sealed record ScannerPickerOption(string Name, ScannerMode Value);
 }

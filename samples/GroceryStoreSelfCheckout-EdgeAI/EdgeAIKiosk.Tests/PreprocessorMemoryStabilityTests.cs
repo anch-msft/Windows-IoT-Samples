@@ -1,4 +1,5 @@
-using EdgeAIKiosk.Pipeline;
+using EdgeAI_ObjectDetection.Controls;
+using EdgeAI_ObjectDetection.Pipeline;
 using System.Diagnostics;
 using Windows.Graphics.Imaging;
 
@@ -11,13 +12,14 @@ public class PreprocessorMemoryStabilityTests
     [MemoryStabilityFact]
     public void Preprocessor_DoesNotGrowMemoryOverRepeatedFrames()
     {
-        var preprocessor = new Yolo26Preprocessor();
-        using var frame = new SoftwareBitmap(BitmapPixelFormat.Bgra8, 640, 480, BitmapAlphaMode.Ignore);
+        YoloPreprocessor preprocessor = new();
+        using SoftwareBitmap frame = new(BitmapPixelFormat.Bgra8, 640, 480, BitmapAlphaMode.Ignore);
+        PreviewGeometry crop = new(0, 0, 640, 480, 1, 0, 0);
 
-        for (var i = 0; i < 20; i++) preprocessor.Preprocess(frame);
-        var baseline = PrivateBytes();
+        for (int i = 0; i < 20; i++) preprocessor.Preprocess(frame, crop, false);
+        long baseline = PrivateBytes();
 
-        for (var i = 0; i < 1000; i++) preprocessor.Preprocess(frame);
+        for (int i = 0; i < 1000; i++) preprocessor.Preprocess(frame, crop, false);
 
         Assert.True(PrivateBytes() <= baseline + (32L * 1024L * 1024L));
     }
@@ -27,7 +29,7 @@ public class PreprocessorMemoryStabilityTests
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        using var process = Process.GetCurrentProcess();
+        using Process process = Process.GetCurrentProcess();
         process.Refresh();
         return process.PrivateMemorySize64;
     }

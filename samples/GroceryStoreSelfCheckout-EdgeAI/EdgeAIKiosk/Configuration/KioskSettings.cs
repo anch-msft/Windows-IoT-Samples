@@ -6,15 +6,14 @@ namespace EdgeAIKiosk;
 
 public enum ScannerMode { HidScanner, Keyboard }
 
-public static class KioskSettings
+public sealed class KioskSettings
 {
-    public static string ModelFileName { get; set; } = "Models\\yolo26x.onnx";
-    public static string? CameraDeviceId { get; set; }
+    public string ModelFileName { get; set; } = "Models\\yolo26x.onnx";
+    public string? CameraGroupId { get; set; }
     // Null keeps automatic NPU, GPU, then CPU selection.
-    public static OrtHardwareDeviceType? PreferredHardware { get; set; }
-    public static string LabelTypeName { get; set; } = "CocoLabels";
-    public static ScannerMode ScannerMode { get; set; } = ScannerMode.HidScanner;
-    public static HashSet<string> AcceptedLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    public OrtHardwareDeviceType? PreferredHardware { get; set; }
+    public ScannerMode ScannerMode { get; set; } = ScannerMode.HidScanner;
+    public HashSet<string> AcceptedLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
         "apple",
         "banana",

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Edge AI Kiosk is a WinUI 3 proof-of-concept for self-checkout basket verification. The app lets a cashier or customer scan items, captures camera frames at checkout, runs a YOLO ONNX model locally with Windows ML, and compares detected objects against the scanned cart before payment.
+Edge AI Kiosk is a WinUI 3 proof-of-concept for self-checkout basket verification. The app lets a cashier or customer scan items, continuously analyzes camera frames using a YOLO ONNX model locally with Windows ML, and compares the latest completed detections against the scanned cart before payment.
 
 The goal is to show why edge AI is useful in a kiosk: low-latency verification, no cloud round trip for camera frames, and local inference that can use an NPU, GPU, or CPU.
 
@@ -20,7 +20,7 @@ The current demo flow is:
 3. Optionally choose which COCO labels the kiosk should verify.
 4. Scan items on the shopping screen. For this POC, scanner input is treated as both the barcode and item name, so use labels such as `apple`, `banana`, `orange`, `bottle`, or `cup`.
 5. Select **Pay Now**.
-6. The app captures camera frames, runs object detection, and opens the alert screen with either a successful checkout or a mismatch list.
+6. The app copies the latest completed streaming detections and opens the alert screen with either a successful checkout or a mismatch list. A mismatch screen keeps the same live stream running without reloading the camera or model; the checkout decision remains fixed to the copied result.
 <img width="761" height="486" alt="alertwindow" src="https://github.com/user-attachments/assets/ef9e39b7-8b9a-4cfb-ba4c-d7dbb8ee1f19" />
 
 
@@ -66,30 +66,28 @@ To run the standalone detection demo instead, set `EdgeAI-ObjectDetection` as th
 ```text
 EdgeAIKiosk\
   App.xaml                         App startup and shared resources
-  Configuration\KioskSettings.cs  Runtime model, hardware, camera, and label selections
+  Configuration\KioskSettings.cs  App-owned model, hardware, camera, and label selections
   Styles\KioskStyles.xaml          Shared brushes, spacing, typography, and control styles
   Views\HomeWindow.xaml            Model, hardware, camera, and label selection
   Views\ShoppingView.xaml          Barcode input, cart UI, camera preview, checkout
   Views\AlertWindow.xaml           Verification result UI
-  Pipeline\ImageCapture.cs         WinRT camera preview and frame capture
-  Pipeline\Yolo26Preprocessor.cs   SoftwareBitmap to 640x640 tensor conversion
-  Pipeline\Yolo26SnapdragonXLoader.cs
-                                   Windows ML session selection and YOLO output parsing
-  Pipeline\MajorityFrames.cs       Multi-frame confidence/count gate
-  Services\ShoppingVerifier.cs     Compares scanned cart labels with detected labels
-  Services\VerifierFactory.cs      Wires capture, preprocessing, model, and tracking
-  DataModels\                      Cart, detection, model input/output, and result types
+  YoloInferenceView\              Exact local copy of the ObjectDetection control, pipeline, and types
+  Services\KioskInference.cs       Converts session options into explicit control settings
+  Services\ExecutionProviderPolicy.cs
+                                   App-owned Auto/provider fallback
+  Services\ShoppingVerifier.cs     Compares cart labels with a single inference result
+  DataModels\                      Cart and verification result types
   Models\                          Local ONNX model files; not committed to Git
 
 EdgeAIKiosk.Tests\
-  xUnit tests for tracking, letterbox math, hardware options/errors, startup handling, and verification
+  xUnit tests for provider fallback, hardware options, startup handling, and single-result verification
 
 EdgeAI-ObjectDetection\
   MainWindow.xaml                 Model-folder, provider, camera, and inference-mode selection
-  YoloInferenceView\              Reusable control with Pipeline and Types subfolders
+  YoloInferenceView\              Reusable control source, including Pipeline and Types
 
 EdgeAI-ObjectDetection.Tests\
-  xUnit tests for preview geometry, model contracts, detection decoding, and snapshots
+  xUnit tests for preview geometry, model contracts, detection decoding, label filtering, and snapshots
 ```
 
 ## Model Setup
@@ -115,22 +113,22 @@ This repository does not include an ONNX model because model licenses and sizes 
 The default model path is configured in `KioskSettings.cs`:
 
 ```csharp
-public static string ModelFileName { get; set; } = "Models\\yolo26x.onnx";
+public string ModelFileName { get; set; } = "Models\\yolo26x.onnx";
 ```
 
 At build time, any `EdgeAIKiosk\Models\*.onnx` file is copied to the output directory. At runtime, the home screen lists those copied `.onnx` files in the model picker.
 
-The current loader expects:
+Both applications use the same control and model contract:
 
-- Input name: `images`
+- Input name: read from model metadata (one input)
 - Input layout: `NCHW`
 - Input shape: `1 x 3 x 640 x 640`
 - Opset: use the opset required by your export tool and supported by the installed Windows ML runtime and selected execution provider
 - Pixel format: RGB values normalized to `0.0` through `1.0`
 - Output shape: `1 x 300 x 6`, containing `x1`, `y1`, `x2`, `y2`, confidence, and COCO class id per detection row
-- Label mapping: class ids must match `CocoLabels.cs`
+- Class mapping: class ids must match the standard COCO ordering returned by `YoloInferenceView.GetSupportedClasses()`
 
-If your model uses a different input name, shape, output layout, or label set, update `Yolo26SnapdragonXLoader.cs`, `Yolo26Preprocessor.cs`, and `CocoLabels.cs` before running checkout verification.
+Other shapes, output layouts, and label sets require changes to the shared `YoloInferenceView` pipeline. See [Supported model contract](#supported-model-contract).
 
 ## Configuration
 
@@ -140,25 +138,27 @@ Configuration is currently in code and through the home-screen settings UI:
 | --- | --- | --- |
 | Model file | `KioskSettings.ModelFileName` and the model picker | Defaults to `Models\yolo26x.onnx`. |
 | Inference hardware | `KioskSettings.PreferredHardware` and the hardware picker | Defaults to Auto, which tries NPU, GPU, then CPU. The picker lists only detected types; an explicit choice uses only that hardware type. |
-| Camera | `KioskSettings.CameraDeviceId` and the camera picker | Defaults to the first available video device. |
+| Camera | `KioskSettings.CameraGroupId` and the camera picker | Defaults to the first available group with a color preview or recording stream. |
 | Labels to verify | `KioskSettings.AcceptedLabels` and the label dialog | Defaults to `apple`, `banana`, `orange`, `bottle`, and `cup`. |
 
 ## Architecture
 
-Checkout verification is intentionally split into small pipeline stages:
+Each app compiles its own identical copy of `YoloInferenceView`; the kiosk no longer has a separate app-specific camera pipeline or bounding-box renderer. Update the reusable component in `EdgeAI-ObjectDetection` first, then copy the entire `YoloInferenceView` folder unchanged into `EdgeAIKiosk`. Keep kiosk integration outside that folder. Kiosk settings are passed between windows as an app-owned instance, not read globally by the inference control.
 
-1. `ShoppingView` collects scanned items and owns the live camera preview.
-2. `ImageCapture` starts `MediaCapture`, reads color frames, and returns `SoftwareBitmap` frames.
-3. `Yolo26Preprocessor` converts frames to ImageSharp RGB images, letterboxes them to 640x640, writes CHW tensor data, and stores scale/padding metadata.
-4. `Yolo26SnapdragonXLoader` runs the ONNX model on the selected Windows ML hardware. Auto tries NPU, GPU, then CPU; an explicit choice uses only that hardware type.
-5. `MajorityFrames` filters detections by confidence and observation count.
-6. `ShoppingVerifier` compares verified detected labels with the scanned cart labels.
-7. `AlertWindow` shows the pass/fail result and mismatch details.
+1. `HomeWindow` discovers models, camera groups, and hardware, and snapshots the selected labels into session options.
+2. `ShoppingView` collects scanned items and hosts `YoloInferenceView` in streaming mode, capped at 30 inference cycles per second. Actual throughput depends on the model and hardware.
+3. `KioskInference` supplies explicit `InferenceSettings`. `ExecutionProviderPolicy` implements Auto (NPU, GPU, CPU) and narrow provider-failure fallback in the app; explicit hardware selection does not fall back.
+4. The shared control captures the visible rectangular crop, letterboxes it to 640x640, runs inference, and displays only selected labels using the same green boxes as ObjectDetection.
+5. **Pay Now** is disabled until the first streaming result arrives (an empty result is valid). Checkout disables cart edits and copies the cart and latest completed detections, without waiting for a new frame, switching modes, or allocating an image snapshot. The detections may predate the click.
+6. `ShoppingVerifier` compares the copied detected label set against scanned labels using the explicit selected-label set. It does not aggregate frames or verify quantities.
+7. `AlertWindow` shows the fixed checkout result, keeps the transferred stream running on mismatch, or awaits inference disposal on success. Returning home awaits disposal; closing the app does not wait for inference shutdown.
 
 ### Design Notes
 
 - Camera capture uses WinRT `MediaCapture` and `MediaFrameReader` because OpenCvSharp does not provide a reliable `win-arm64` native path for this target.
-- Preprocessing uses ImageSharp after frames are converted from `SoftwareBitmap`, then preserves letterbox padding and scale so detections can be mapped back to camera-frame coordinates.
+- Both apps use the shared managed preprocessor, preserving crop/letterbox geometry through decoding and presentation. Neither app depends on ImageSharp.
+- Label selection applies consistently to overlays, detection events, and snapshots. The kiosk always supplies its selection; selecting no labels ignores all detections and cart labels. ObjectDetection defaults to all labels.
+- Boxes no longer distinguish scanned from unscanned items by color. The kiosk's item-count text consumes the control's filtered detection events; verification remains app logic, separate from the control.
 - The app uses async camera initialization because WinRT camera APIs are async-first.
 - WinUI 3 does not support WPF-style `DataTrigger`, so the alert UI uses explicit visibility changes between success and failure panels.
 - Windows ML downloads and registers certified providers when available. The Home picker lists detected hardware; Auto falls back through NPU, GPU, and CPU, while an explicit choice does not fall back.
@@ -196,9 +196,9 @@ Provide any certificate password through your local signing setup or CI secret h
 
 The view reuses clip geometries, a shared detection brush, and overlay rectangles/labels. Overlay elements are allocated as the detection count grows (up to the model's 300 detections), hidden when unused, retained across stops, and released on disposal. Preview layout properties are updated only when their calculated bounds change; camera resolution, stretch mode, and DPI remain part of the geometry calculation. The inference engine caches managed tensor/input wrappers around the reusable input buffer; inference outputs and published detection results are still separately owned per inference.
 
-The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the entire `YoloInferenceView` folder (including its XAML, `Pipeline`, and `Types`), preserve or update its namespaces, and use the same Windows ML and Windows App SDK dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
+The control is currently source-level reusable, not a separate NuGet package. `EdgeAIKiosk\YoloInferenceView` is an exact copy of `EdgeAI-ObjectDetection\YoloInferenceView`, including XAML, code-behind, pipeline/engine, preprocessing, and types. Namespaces are preserved to keep the copies identical. EdgeAIKiosk compiles its local files normally; it has no source links or project reference to ObjectDetection. To use it in another WinUI 3 app, copy the entire `YoloInferenceView` folder and use the same Windows ML and Windows App SDK dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
 
-ObjectDetection has no ImageSharp dependency. Its independently implemented managed preprocessor proportionally resizes the visible rectangular crop to fit 640x640, then centers it on RGB (114,114,114) padding. It uses separable Catmull-Rom bicubic filtering, widened support for downsampling, and normalized crop-edge weights. Resized dimensions are rounded to whole pixels (at least one pixel per axis); an odd padding remainder goes on the right or bottom. Preprocessing returns the tensor, actual letterbox geometry, and optional snapshot pixels together. That geometry travels with the result through decoding and display, rather than being reconstructed from the current viewport. It clamps and rounds channels to bytes before RGB tensor normalization; one-shot snapshots use those same bytes. A per-pipeline workspace caches horizontal and vertical weights and reuses source, scratch, and tensor arrays. OneShot lazily allocates its pixel buffer once and reuses it on subsequent captures. These internal buffers are borrowed until the next preprocessing call: inference consumes the tensor synchronously, and `InferenceSnapshot` copies the pixels into its own bitmap before another call can overwrite them. Earlier snapshots and the uploaded frozen image remain independent. BGRA8 frames with ignored alpha avoid format conversion. EdgeAIKiosk still uses ImageSharp for its separate letterboxing pipeline.
+The shared, independently implemented managed preprocessor proportionally resizes the visible rectangular crop to fit 640x640, then centers it on RGB (114,114,114) padding. It uses separable Catmull-Rom bicubic filtering, widened support for downsampling, and normalized crop-edge weights. Resized dimensions are rounded to whole pixels (at least one pixel per axis); an odd padding remainder goes on the right or bottom. Preprocessing returns the tensor, actual letterbox geometry, and optional snapshot pixels together. That geometry travels with the result through decoding and display, rather than being reconstructed from the current viewport. It clamps and rounds channels to bytes before RGB tensor normalization; one-shot snapshots use those same bytes. A per-pipeline workspace caches horizontal and vertical weights and reuses source, scratch, and tensor arrays. OneShot lazily allocates its pixel buffer once and reuses it on subsequent captures. These internal buffers are borrowed until the next preprocessing call: inference consumes the tensor synchronously, and `InferenceSnapshot` copies the pixels into its own bitmap before another call can overwrite them. Earlier snapshots and the uploaded frozen image remain independent. BGRA8 frames with ignored alpha avoid format conversion.
 
 ```xml
 <!-- Add xmlns:ai="using:EdgeAI_ObjectDetection.Controls" to the containing view. -->
@@ -210,7 +210,7 @@ ObjectDetection has no ImageSharp dependency. Its independently implemented mana
 ```
 
 ```csharp
-var settings = new InferenceSettings
+InferenceSettings settings = new()
 {
     FrameSourceGroup = selectedCameraGroup,
     ModelPath = selectedModel.Path,
@@ -238,24 +238,34 @@ await Yolo.DisposeAsync();
 
 ### Lifecycle and settings
 
-Call lifecycle methods on the UI thread. `StartAsync` retains the supplied init-only settings and returns when the pipeline and preview are started, without waiting for a detection. The control must be stopped before starting; calling `StartAsync` while running throws `InvalidOperationException`, even with equivalent settings. Await `StopAsync` before starting again. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
+Call lifecycle methods on the UI thread. `StartAsync` retains the supplied init-only settings and returns when the pipeline and preview are started, without waiting for a detection. Optional `ClassMask` accepts an `IReadOnlyCollection<string>` of included class names, not an array of Boolean flags or class IDs. Null includes all classes; an empty collection includes none. Names are case-insensitive, duplicates are accepted, and unsupported names cause an `ArgumentException` during initialization. The engine resolves the names once into its own immutable class-ID filter and excludes masked classes before constructing detections, so overlays, events, and snapshots stay consistent. The supported-class list and class IDs are never renumbered. Do not modify the input collection while `StartAsync` is in progress; subsequent caller edits do not change the active filter. Apply a new mask by stopping and starting again.
+
+`GetSupportedClasses()` always returns the view's complete supported class list, regardless of any mask or current detections. The caller can use this list to populate an editable class-selection UI, then pass the selected names as `ClassMask`. The kiosk's selection dialog follows this pattern.
+
+```csharp
+IReadOnlyList<string> classes = YoloInferenceView.GetSupportedClasses();
+List<string> classMask = classes.Where(className => className is "apple" or "banana").ToList();
+await Yolo.StartAsync(settings with { ClassMask = classMask });
+```
+
+The control must be stopped before starting; calling `StartAsync` while running throws `InvalidOperationException`, even with equivalent settings. Await `StopAsync` before starting again. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
 
 For one-shot operation, start with `InferenceType.OneShot`, then call `await Yolo.InferOnceAsync(cancellationToken)`. The control displays the analyzed still image and its boxes together, and returns an `InferenceSnapshot` containing `Detections` (the same read-only list delivered by `DetectionsUpdated`) and `Image` (a caller-owned `SoftwareBitmap`). The image is the exact 640 x 640 letterboxed RGB image used to build the model tensor, including gray padding, stored as opaque BGRA8 with premultiplied alpha for XAML display. Detection boxes are normalized to this image. It contains the visible camera crop, not necessarily the full camera frame, and has no drawn overlays. Dispose the snapshot after copying, displaying, or saving its image; its detections remain usable after disposal. The control retains its own uploaded image, so the sample host can dispose the returned snapshot immediately without affecting the display.
 
 ```csharp
 // Yolo has already been started in OneShot mode.
-using var snapshot = await Yolo.InferOnceAsync(cancellationToken);
-var imageSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
+using InferenceSnapshot snapshot = await Yolo.InferOnceAsync(cancellationToken);
+Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource imageSource = new();
 await imageSource.SetBitmapAsync(snapshot.Image);
 SnapshotImage.Source = imageSource; // A host-owned XAML Image.
-var detections = snapshot.Detections;
+IReadOnlyList<Detection> detections = snapshot.Detections;
 ```
 
 Calls are serialized. A request waits for a new available frame and a usable viewport layout; use cancellation when the host no longer needs the result. One-shot mode keeps capture and the model ready but does not create or play a live preview. The viewport starts empty. Each successful inference replaces the still image and boxes together; they remain visible while waiting for another result, including when that request is canceled. Stop, disposal, or a pipeline fault clears the display. Returned snapshots remain valid across subsequent inferences or stopping/disposing the control until the caller disposes them. Streaming still delivers detection-only events and does not allocate snapshot image buffers. `InferOnceAsync` still requires one-shot mode; stop and restart with `InferenceType.OneShot` when switching from streaming. `MaxEndToEndFps` caps streaming cycles only (0.1-240 FPS); it does not throttle preview playback. Repeated frames are not reprocessed.
 
 `State` and `StateChanged` expose `Stopped`, `Starting`, `Running`, `Stopping`, and `Disposed`. Startup errors propagate to the caller. Asynchronous capture, preview, and streaming failures stop the pipeline and raise `Faulted`; one-shot execution errors also propagate to its caller. Public events run on the UI thread; handlers should be quick and should not synchronously block on lifecycle tasks.
 
-The host must await `StopAsync` or `DisposeAsync` before navigating/replacing its view. `Unloaded` does not automatically dispose the control. This single-window sample relies on process exit to reclaim resources when its window closes; it does not run asynchronous disposal in a close handler. Hosts that continue running after removing the view must explicitly await cleanup.
+The host must await `StopAsync` or `DisposeAsync` when retiring or replacing an inference session. `Unloaded` does not automatically dispose the control. Both samples rely on process exit to reclaim inference resources when the app closes; neither defers window closure to await inference shutdown. The kiosk transfers the same running control from shopping to the mismatch screen by detaching it from its old host and attaching it to the new host, without stopping the session. It awaits disposal on successful checkout and before returning home. Hosts that continue running after retiring the control must explicitly await cleanup.
 
 ### Preview and detections
 
@@ -263,7 +273,7 @@ Normal XAML `Width`, `Height`, and layout constraints size the whole control, in
 
 Inference consumes the entire visible rectangular camera region **as laid out by `PreviewStretch`**, rounded inward to source-pixel boundaries, excluding empty preview space and camera pixels cropped away by that layout. This rectangle is proportionally resized and letterboxed to 640 x 640 with gray padding. `Uniform` includes the full camera frame; `UniformToFill` and `None` can crop it to the viewport. Objects are no longer truncated at an artificial square boundary, but can still be truncated at the actual viewport edge. This input-crop policy is the same in streaming and one-shot modes, even though one-shot mode does not show the live camera. Resize/DPI changes update the next input crop without restarting the model or camera and discard in-flight results with obsolete capture geometry. Streaming clears old boxes and removes model padding when mapping new boxes onto the visible camera rectangle. One-shot mode instead retains the last result and uniformly fits its entire square model-input image (including padding) and matching boxes to the viewport, independent of `PreviewStretch`; resizing does not crop or invalidate the displayed still. A zero-sized viewport pauses inference, not capture. Hiding the camera image does not change the input crop.
 
-Each immutable `Detection` contains `ClassId`, `Label`, `Confidence`, and a `BoundingBox` with normalized `X`, `Y`, `Width`, and `Height` within the 640 x 640 letterboxed model-input image. The origin is the model image's top-left, including padding. Boxes are clipped to the camera-content rectangle within that image; padding-only detections are discarded. Coordinates are not relative to the unpadded crop, full camera image, or XAML control. Hosts interested only in classes/counts can ignore the boxes. `GetSupportedClasses()` returns the read-only COCO label list, indexed by class ID.
+Each immutable `Detection` contains `ClassId`, `Label`, `Confidence`, and a `BoundingBox` with normalized `X`, `Y`, `Width`, and `Height` within the 640 x 640 letterboxed model-input image. The origin is the model image's top-left, including padding. Boxes are clipped to the camera-content rectangle within that image; padding-only detections are discarded. Coordinates are not relative to the unpadded crop, full camera image, or XAML control. Hosts interested only in classes/counts can ignore the boxes. The static `YoloInferenceView.GetSupportedClasses()` method returns the complete read-only COCO class list, indexed by class ID, without constructing or starting a view. `ClassMask` never narrows this discovery list.
 
 These dependency properties can change while running: `ShowCameraPreview`, `ShowBoundingBoxes`, `ShowLabels`, `ShowConfidence`, `ShowInferenceStatus`, `ShowInferenceTime`, and `ShowEndToEndInferenceTime`. They default to true. `ShowCameraPreview` controls live-image visibility in streaming and still-image visibility in one-shot mode; it never enables a live preview in one-shot mode. Both timing displays update for each accepted result in streaming and one-shot modes. E2E inference time runs from acquiring the available camera frame through preprocessing, inference, postprocessing, dispatch back to the UI, and bounding-box/label element updates, including the image upload in one-shot mode. It excludes waiting for a new frame, stream throttling, event-handler work, and deferred XAML layout/rendering or screen presentation. It measures the work of updating the presentation, not camera preview FPS or camera-to-display latency. The separate inference time covers the engine call (including its output decoding) without preprocessing or presentation updates.
 
@@ -296,10 +306,11 @@ On a device with a camera and compatible model, also exercise streaming/one-shot
 Run the xUnit test project from the `samples\GroceryStoreSelfCheckout-EdgeAI` directory:
 
 ```powershell
-dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj -r win-x64 -p:Platform=x64
+msbuild EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj /restore /t:Build /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj --no-build --no-restore -c Debug -r win-x64 -p:Platform=x64
 ```
 
-The tests cover core verification logic, majority-frame tracking, letterbox coordinate conversion, hardware-picker filtering and ordering, camera/model error handling, and startup error reporting.
+The kiosk tests cover single-result label-set verification, explicit selection semantics, Auto/provider fallback, hardware-picker filtering and ordering, and startup error reporting. Reusable geometry, model validation, decoder, preprocessing, snapshot, and label-filter coverage lives in `EdgeAI-ObjectDetection.Tests`. After updating the control in ObjectDetection, copy the entire component unchanged to EdgeAIKiosk and run both test projects.
 
 For ARM64, use `-r win-arm64 -p:Platform=ARM64` on a Windows ARM64 device.
 
@@ -311,16 +322,16 @@ To enable them in Visual Studio Test Explorer, set the environment variable befo
 
 ```powershell
 $env:RUN_MEMORY_STABILITY_TESTS = "1"
-dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj -r win-x64 -p:Platform=x64 --filter "FullyQualifiedName~PreprocessorMemoryStabilityTests"
-dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj -r win-x64 -p:Platform=x64 --filter "FullyQualifiedName~YoloInferenceMemoryStabilityTests"
+dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj --no-build --no-restore -c Debug -r win-x64 -p:Platform=x64 --filter "FullyQualifiedName~PreprocessorMemoryStabilityTests"
+dotnet test EdgeAIKiosk.Tests\EdgeAIKiosk.Tests.csproj --no-build --no-restore -c Debug -r win-x64 -p:Platform=x64 --filter "FullyQualifiedName~YoloInferenceMemoryStabilityTests"
 Remove-Item Env:\RUN_MEMORY_STABILITY_TESTS
 ```
 
 For ARM64, use `-r win-arm64 -p:Platform=ARM64` on a Windows ARM64 device. Requirements:
 
 - The same .NET SDK/runtime and Windows App SDK/WinUI build tooling as the regular tests.
-- For inference, a compatible model at `EdgeAIKiosk\Models\yolo26x.onnx` with the input/output contract described in Model Setup, and a working Windows ML execution provider for the selected architecture.
-- No camera is needed: preprocessing uses a synthetic bitmap, and inference uses a zero-filled tensor. These tests measure memory growth, not detection accuracy.
+- For inference, a compatible model at `EdgeAIKiosk\Models\yolo26x.onnx` with the input/output contract described in Model Setup, and a working Windows ML CPU execution provider for the selected architecture.
+- No camera is needed: these tests exercise the shared preprocessor and inference engine with synthetic bitmaps. They measure memory growth, not detection accuracy.
 
 After warm-up, each test runs 1,000 operations. The allowed process-private memory growth after garbage collection is 32 MiB for preprocessing and 64 MiB for inference. Runtime/provider caching can affect these measurements. The tests disable parallel execution to avoid overlapping measurements. The separate `dotnet test` commands above additionally give each test a fresh process.
 
@@ -345,10 +356,10 @@ After warm-up, each test runs 1,000 operations. The allowed process-private memo
 | `byte[].AsBuffer()` is not found while editing preprocessing code | Ensure `System.Runtime.InteropServices.WindowsRuntime` is referenced where WinRT buffer conversion is used. |
 | XAML compiler exits with a generic error | Check that each `Window` has a single root child element. Multiple direct root grids can cause markup compilation failures. |
 | `onnxruntime.dll` is missing at runtime | Restore and rebuild for an explicit runtime such as `win-arm64` or `win-x64`; Windows ML supplies the matching native runtime. |
-| Verification always mismatches | Make sure scanned values match the configured labels and the model class ids align with `CocoLabels.cs`. |
+| Verification always mismatches | Make sure scanned values match the configured labels and the model class ids use the standard COCO ordering. Keep items inside the visible preview crop. |
 
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
-Third-party dependencies are covered in [NOTICE.md](NOTICE.md). Model weights are not included in this repository and are licensed separately. Review the license of the specific model you use.
+Third-party packages retain their respective licenses. The former ImageSharp-specific notice was removed with that dependency. Model weights are not included in this repository and are licensed separately. Review the license of the specific model you use.

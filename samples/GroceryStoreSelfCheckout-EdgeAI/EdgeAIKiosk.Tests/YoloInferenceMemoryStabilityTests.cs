@@ -1,6 +1,8 @@
-using EdgeAIKiosk.Models;
-using EdgeAIKiosk.Pipeline;
+using EdgeAI_ObjectDetection.Controls;
+using EdgeAI_ObjectDetection.Pipeline;
+using Microsoft.ML.OnnxRuntime;
 using System.Diagnostics;
+using Windows.Graphics.Imaging;
 
 namespace EdgeAIKiosk.Tests;
 
@@ -9,23 +11,25 @@ namespace EdgeAIKiosk.Tests;
 public class YoloInferenceMemoryStabilityTests
 {
     [MemoryStabilityFact]
-    public async Task YoloInference_DoesNotGrowMemoryOverRepeatedRuns()
+    public void YoloInference_DoesNotGrowMemoryOverRepeatedRuns()
     {
-        var modelPath = Path.Combine(RepoRoot(), "EdgeAIKiosk", "Models", "yolo26x.onnx");
-        var input = new ModelInput(new float[3 * 640 * 640], 640, 640, 3) { Scale = 1f };
-        using var loader = new Yolo26SnapdragonXLoader(modelPath);
+        string modelPath = Path.Combine(RepoRoot(), "EdgeAIKiosk", "Models", "yolo26x.onnx");
+        using SoftwareBitmap frame = new(BitmapPixelFormat.Bgra8, 640, 640, BitmapAlphaMode.Ignore);
+        PreprocessedFrame input = new YoloPreprocessor().Preprocess(frame, new PreviewGeometry(0, 0, 640, 640, 1, 0, 0), false);
+        OrtEpDevice cpu = OrtEnv.Instance().GetEpDevices().First(device => device.HardwareDevice.Type == OrtHardwareDeviceType.CPU);
+        using YoloInferenceEngine loader = YoloInferenceEngine.Create(modelPath, cpu);
 
-        for (var i = 0; i < 10; i++) await loader.RunInference(input);
-        var baseline = PrivateBytes();
+        for (int i = 0; i < 10; i++) loader.Run(input);
+        long baseline = PrivateBytes();
 
-        for (var i = 0; i < 1000; i++) await loader.RunInference(input);
+        for (int i = 0; i < 1000; i++) loader.Run(input);
 
         Assert.True(PrivateBytes() <= baseline + (64L * 1024L * 1024L));
     }
 
     private static string RepoRoot()
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "EdgeAIKiosk")))
             directory = directory.Parent;
 
@@ -37,7 +41,7 @@ public class YoloInferenceMemoryStabilityTests
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        using var process = Process.GetCurrentProcess();
+        using Process process = Process.GetCurrentProcess();
         process.Refresh();
         return process.PrivateMemorySize64;
     }
