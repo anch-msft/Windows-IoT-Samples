@@ -11,9 +11,15 @@ public readonly record struct DetectionBox(float X, float Y, float Width, float 
 
 public sealed record Detection(int ClassId, string Label, float Confidence, DetectionBox BoundingBox);
 
-public sealed class DetectionsUpdatedEventArgs(IReadOnlyList<Detection> detections) : EventArgs
+/// <summary>Coordinates in XAML DIPs relative to the preview area's top-left, excluding status text.</summary>
+public readonly record struct PreviewDetectionBox(double X, double Y, double Width, double Height);
+
+public sealed record PreviewDetection(int ClassId, string Label, float Confidence, PreviewDetectionBox BoundingBox);
+
+/// <summary>Display coordinates for the layout at the time of this event; not snapshot-image coordinates.</summary>
+public sealed class DetectionsUpdatedEventArgs(IReadOnlyList<PreviewDetection> detections) : EventArgs
 {
-    public IReadOnlyList<Detection> Detections
+    public IReadOnlyList<PreviewDetection> Detections
     {
         get;
     } = detections;

@@ -34,6 +34,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
     private long _geometryVersion;
     private PreviewGeometry? _geometry;
     private PipelineResult? _displayedResult;
+    private IReadOnlyList<PreviewDetection> _previewDetections = Array.Empty<PreviewDetection>();
     private readonly RectangleGeometry _viewportClip = new();
     private readonly RectangleGeometry _overlayClip = new();
     private readonly SolidColorBrush _detectionBrush = new(Colors.LimeGreen);
@@ -489,7 +490,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         TimeSpan endToEndTime = Stopwatch.GetElapsedTime(result.StartedAt);
         TimingText.Text = $"Inference: {result.InferenceTime.TotalMilliseconds:F0} ms";
         EndToEndTimingText.Text = $"E2E inference: {endToEndTime.TotalMilliseconds:F0} ms";
-        DetectionsUpdated?.Invoke(this, new DetectionsUpdatedEventArgs(result.Detections));
+        DetectionsUpdated?.Invoke(this, new DetectionsUpdatedEventArgs(_previewDetections));
     }
 
     private void Player_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
@@ -572,6 +573,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         if (StillFrame.Source is null)
         {
             _displayedResult = null;
+            _previewDetections = Array.Empty<PreviewDetection>();
             SetOverlayCount(0);
         }
     }
@@ -631,6 +633,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
 
     private void DrawDetections()
     {
+        _previewDetections = Array.Empty<PreviewDetection>();
         if (_displayedResult is not { } result)
         {
             SetOverlayCount(0);
@@ -660,6 +663,7 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
             SetOverlayCount(0);
             return;
         }
+        _previewDetections = geometry.MapDetections(result.Detections, showingStill ? null : result.Letterbox);
         Rect overlayBounds = new(geometry.OverlayX, geometry.OverlayY, geometry.OverlayWidth, geometry.OverlayHeight);
         if (_overlayClip.Rect != overlayBounds)
         {
@@ -675,19 +679,14 @@ public sealed partial class YoloInferenceView : UserControl, IAsyncDisposable
         for (int index = 0; index < count; index++)
         {
             var elements = _overlayElements[index];
-            Detection detection = result.Detections[index];
-            DetectionBox box = detection.BoundingBox;
-            if (!showingStill)
-            {
-                box = result.Letterbox.ToCropBox(box);
-            }
-            double x = geometry.OverlayX + box.X * geometry.OverlayWidth;
-            double y = geometry.OverlayY + box.Y * geometry.OverlayHeight;
+            PreviewDetection detection = _previewDetections[index];
+            PreviewDetectionBox box = detection.BoundingBox;
+            double x = box.X;
+            double y = box.Y;
             elements.Box.Visibility = showBoxes ? Visibility.Visible : Visibility.Collapsed;
             if (showBoxes)
             {
-                SetBounds(elements.Box, new Rect(x, y, box.Width * geometry.OverlayWidth,
-                    box.Height * geometry.OverlayHeight));
+                SetBounds(elements.Box, new Rect(x, y, box.Width, box.Height));
             }
             elements.Label.Visibility = showLabel ? Visibility.Visible : Visibility.Collapsed;
             if (showLabel)
