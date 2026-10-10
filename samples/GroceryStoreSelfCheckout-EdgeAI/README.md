@@ -29,19 +29,19 @@ The current demo flow is:
 
 | Area | Requirement |
 | --- | --- |
-| Hardware | Windows device with an NPU, DirectX 12 GPU, or CPU. Windows ML prefers NPU, then GPU, then CPU. |
-| OS | Windows 11 24H2 or newer recommended for dynamic execution-provider installation. The project targets `net8.0-windows10.0.19041.0` and package min version `10.0.18362.0`. |
+| Hardware | Windows device with an NPU, DirectX 12 GPU, or CPU. The kiosk's Auto mode tries NPU, then GPU, then CPU; ObjectDetection uses the explicitly selected execution provider. |
+| OS | Windows 11 24H2 or newer recommended for dynamic execution-provider installation. Both applications target `net8.0-windows10.0.19041.0`. |
 | SDK | .NET 8 SDK. |
-| IDE | Visual Studio 2022 17.8 or newer with .NET desktop development, Windows App SDK, and WinUI tooling. |
+| IDE | Visual Studio with `.slnx` support (Visual Studio 2022 17.14 or newer), .NET desktop development, Windows App SDK, and WinUI tooling. Use a Visual Studio Developer PowerShell for MSBuild commands. |
 | Camera | Built-in camera or USB UVC-compatible webcam. |
 | Scanner | Barcode scanner that behaves like a keyboard, or a keyboard for manual demo input. |
-| Model | A compatible YOLO26 ONNX model copied into `EdgeAIKiosk\Models\`. |
+| Model | A compatible ONNX model with the input/output contract below. Copy it into `EdgeAIKiosk\Models\` for checkout, or select its folder in ObjectDetection. |
 
 ## Quick Start
 
 ```powershell
-git clone https://github.com/t-shrpathak_microsoft/EdgeAIKioskProject.git
-cd EdgeAIKioskProject
+git clone https://github.com/microsoft/Windows-IoT-Samples.git
+Set-Location Windows-IoT-Samples\samples\GroceryStoreSelfCheckout-EdgeAI
 
 New-Item -ItemType Directory -Force EdgeAIKiosk\Models
 
@@ -49,17 +49,17 @@ New-Item -ItemType Directory -Force EdgeAIKiosk\Models
 # or another model zoo, converted to the contract in Model Setup.
 Copy-Item <path-to-model>\yolo26x.onnx EdgeAIKiosk\Models\yolo26x.onnx
 
-dotnet restore EdgeAIKiosk\EdgeAIKiosk.csproj
-dotnet build EdgeAIKiosk\EdgeAIKiosk.csproj -c Debug -r win-arm64
-dotnet run --project EdgeAIKiosk\EdgeAIKiosk.csproj -c Debug -r win-arm64
+msbuild EdgeAIKiosk\EdgeAIKiosk.csproj /restore /t:Build /p:Configuration=Debug /p:Platform=ARM64 /p:RuntimeIdentifier=win-arm64
 ```
 
 Visual Studio is the recommended launch path for day-to-day WinUI debugging:
 
 1. Open `EdgeAIKiosk.slnx`.
-2. Select the `ARM64` platform for Snapdragon X hardware.
+2. Set `EdgeAIKiosk` as the startup project and select the `ARM64` platform for Snapdragon X hardware, or `x64` for an x64 device.
 3. Confirm `EdgeAIKiosk\Models\yolo26x.onnx` exists before launching.
 4. Press F5.
+
+To run the standalone detection demo instead, set `EdgeAI-ObjectDetection` as the startup project and press F5. Choose a folder containing compatible `.onnx` models, then select a model, execution provider, and camera. It does not require copying models into the kiosk's `Models` folder.
 
 ## Project Structure
 
@@ -83,6 +83,13 @@ EdgeAIKiosk\
 
 EdgeAIKiosk.Tests\
   xUnit tests for tracking, letterbox math, hardware options/errors, startup handling, and verification
+
+EdgeAI-ObjectDetection\
+  MainWindow.xaml                 Model-folder, provider, camera, and inference-mode selection
+  YoloInferenceView\              Reusable control with Pipeline and Types subfolders
+
+EdgeAI-ObjectDetection.Tests\
+  xUnit tests for preview geometry, model contracts, detection decoding, and snapshots
 ```
 
 ## Model Setup
@@ -118,7 +125,7 @@ The current loader expects:
 - Input name: `images`
 - Input layout: `NCHW`
 - Input shape: `1 x 3 x 640 x 640`
-- Opset: use the opset required by your export tool and supported by the installed ONNX Runtime QNN package
+- Opset: use the opset required by your export tool and supported by the installed Windows ML runtime and selected execution provider
 - Pixel format: RGB values normalized to `0.0` through `1.0`
 - Output shape: `1 x 300 x 6`, containing `x1`, `y1`, `x2`, `y2`, confidence, and COCO class id per detection row
 - Label mapping: class ids must match `CocoLabels.cs`
@@ -172,6 +179,125 @@ Copy-Item EdgeAIKiosk\Models\yolo26x.onnx .\publish\win-arm64\Models\yolo26x.onn
 Copy the published folder to the target Snapdragon X device and run `EdgeAIKiosk.exe`.
 
 For MSIX packaging, use Visual Studio **Package and Publish** on the `EdgeAIKiosk` project. Sign the package with a trusted certificate before installing on a kiosk device.
+
+### Publish profiles and package signing
+
+Both applications reference `Properties\PublishProfiles\win-$(Platform).pubxml`. The shared platform profiles are included in source control and contain only publishing settings, not credentials. Keep personal profiles, `*.pubxml.user` files, and `*.pfx` signing certificates out of Git.
+
+`EdgeAI-ObjectDetection` defaults to unsigned packaging and does not depend on a temporary certificate. Unsigned MSIX packages are not ready for normal installation. To create an installable package, configure signing in Visual Studio **Package and Publish**, or supply these MSBuild properties through local or CI configuration:
+
+```powershell
+# Run from a Visual Studio Developer PowerShell in the sample directory.
+# Keep the certificate outside the repository; its subject must match the manifest Publisher.
+msbuild EdgeAI-ObjectDetection\EdgeAI-ObjectDetection.csproj /restore /t:Build /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:GenerateAppxPackageOnBuild=true /p:AppxPackageSigningEnabled=true /p:PackageCertificateKeyFile="C:\Signing\EdgeAI.pfx"
+```
+
+Provide any certificate password through your local signing setup or CI secret handling, never through committed files. The target device must trust the signing certificate. If Visual Studio writes a private certificate path or thumbprint back into the project, keep that setting local rather than committing it.
+
+## Reusable ObjectDetection view
+
+`EdgeAI-ObjectDetection` hosts `YoloInferenceView\YoloInferenceView.xaml`. The component's implementation lives in the `YoloInferenceView` folder, with `Pipeline` and `Types` subfolders. The window only discovers models, execution providers, and camera groups; the control owns its camera reader, preview player, inference pipeline, and overlays. Changing any selection performs a coordinated stop/start. Select **One shot** and press **Run one inference** to display an analyzed still image with its detections, without a live preview; streaming is the default.
+
+The view reuses clip geometries, a shared detection brush, and overlay rectangles/labels. Overlay elements are allocated as the detection count grows (up to the model's 300 detections), hidden when unused, retained across stops, and released on disposal. Preview layout properties are updated only when their calculated bounds change; camera resolution, stretch mode, and DPI remain part of the geometry calculation. The inference engine caches managed tensor/input wrappers around the reusable input buffer; inference outputs and published detection results are still separately owned per inference.
+
+The control is currently source-level reusable, not a separate NuGet package. To use it in another WinUI 3 app, include the entire `YoloInferenceView` folder (including its XAML, `Pipeline`, and `Types`), preserve or update its namespaces, and use the same Windows ML and Windows App SDK dependencies as ObjectDetection. The host must have camera access and the appropriate package capabilities (`webcam`, `runFullTrust`, and `systemAIModels` as in the sample manifest). The host discovers/registers execution providers before supplying a selected `OrtEpDevice`.
+
+ObjectDetection has no ImageSharp dependency. Its independently implemented managed preprocessor proportionally resizes the visible rectangular crop to fit 640x640, then centers it on RGB (114,114,114) padding. It uses separable Catmull-Rom bicubic filtering, widened support for downsampling, and normalized crop-edge weights. Resized dimensions are rounded to whole pixels (at least one pixel per axis); an odd padding remainder goes on the right or bottom. Preprocessing returns the tensor, actual letterbox geometry, and optional snapshot pixels together. That geometry travels with the result through decoding and display, rather than being reconstructed from the current viewport. It clamps and rounds channels to bytes before RGB tensor normalization; one-shot snapshots use those same bytes. A per-pipeline workspace caches horizontal and vertical weights and reuses source, scratch, and tensor arrays. OneShot lazily allocates its pixel buffer once and reuses it on subsequent captures. These internal buffers are borrowed until the next preprocessing call: inference consumes the tensor synchronously, and `InferenceSnapshot` copies the pixels into its own bitmap before another call can overwrite them. Earlier snapshots and the uploaded frozen image remain independent. BGRA8 frames with ignored alpha avoid format conversion. EdgeAIKiosk still uses ImageSharp for its separate letterboxing pipeline.
+
+```xml
+<!-- Add xmlns:ai="using:EdgeAI_ObjectDetection.Controls" to the containing view. -->
+<ai:YoloInferenceView x:Name="Yolo"
+                      Width="800" Height="600"
+                      PreviewStretch="UniformToFill"
+                      ShowEndToEndInferenceTime="True"
+                      ShowInferenceTime="True" />
+```
+
+```csharp
+var settings = new InferenceSettings
+{
+    FrameSourceGroup = selectedCameraGroup,
+    ModelPath = selectedModel.Path,
+    ExecutionProvider = selectedDevice,
+    MaxEndToEndFps = 30,
+    InferenceType = InferenceType.Stream
+};
+
+Yolo.DetectionsUpdated += (_, args) =>
+{
+    // Empty means inference completed with no detections.
+    foreach (PreviewDetection detection in args.Detections)
+        Debug.WriteLine($"{detection.Label}: {detection.Confidence:P0}");
+};
+Yolo.Faulted += (_, args) => Debug.WriteLine(args.Exception);
+await Yolo.StartAsync(settings);
+
+// Before replacing a model/camera or navigating away from a reusable view:
+await Yolo.StopAsync();
+await Yolo.StartAsync(settings with { ModelPath = anotherModel.Path });
+
+// When permanently retiring the instance:
+await Yolo.DisposeAsync();
+```
+
+### Lifecycle and settings
+
+Call lifecycle methods on the UI thread. `StartAsync` retains the supplied init-only settings and returns when the pipeline and preview are started, without waiting for a detection. The control must be stopped before starting; calling `StartAsync` while running throws `InvalidOperationException`, even with equivalent settings. Await `StopAsync` before starting again. Startup cancellation unwinds acquired resources. `StopAsync` cancels startup/inference, detaches preview consumers, waits for outstanding model execution, and releases the pipeline; it is safe to repeat. `DisposeAsync` also permanently retires the instance.
+
+Pipeline cleanup attempts to release the reader, camera capture, and model even if an earlier cleanup step fails, then reports any failures together in an `AggregateException`.
+
+For one-shot operation, start with `InferenceType.OneShot`, then call `await Yolo.InferOnceAsync(cancellationToken)`. The control displays the analyzed still image and its boxes together, and returns an `InferenceSnapshot` containing image-relative `Detections` and `Image` (a caller-owned `SoftwareBitmap`). Unlike the event's `PreviewDetection` list, snapshot detections remain normalized to the image, independent of view layout. The image is the exact 640 x 640 letterboxed RGB image used to build the model tensor, including gray padding, stored as opaque BGRA8 with premultiplied alpha for XAML display. It contains the visible camera crop, not necessarily the full camera frame, and has no drawn overlays. Dispose the snapshot after copying, displaying, or saving its image; its detections remain usable after disposal. The control retains its own uploaded image, so the sample host can dispose the returned snapshot immediately without affecting the display.
+
+```csharp
+// Yolo has already been started in OneShot mode.
+using var snapshot = await Yolo.InferOnceAsync(cancellationToken);
+var imageSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
+await imageSource.SetBitmapAsync(snapshot.Image);
+SnapshotImage.Source = imageSource; // A host-owned XAML Image.
+var detections = snapshot.Detections;
+```
+
+Calls are serialized. A request waits for a new available frame and a usable viewport layout; use cancellation when the host no longer needs the result. One-shot mode keeps capture and the model ready but does not create or play a live preview. The viewport starts empty. Each successful inference replaces the still image and boxes together; they remain visible while waiting for another result, including when that request is canceled. Stop, disposal, or a pipeline fault clears the display. Returned snapshots remain valid across subsequent inferences or stopping/disposing the control until the caller disposes them. Streaming still delivers detection-only events and does not allocate snapshot image buffers. `InferOnceAsync` still requires one-shot mode; stop and restart with `InferenceType.OneShot` when switching from streaming. `MaxEndToEndFps` caps streaming cycles only (0.1-240 FPS); it does not throttle preview playback. Repeated frames are not reprocessed.
+
+`State` and `StateChanged` expose `Stopped`, `Starting`, `Running`, `Stopping`, and `Disposed`. Startup errors propagate to the caller. Asynchronous capture, preview, and streaming failures stop the pipeline and raise `Faulted`; one-shot execution errors also propagate to its caller. Public events run on the UI thread; handlers should be quick and should not synchronously block on lifecycle tasks.
+
+The host must await `StopAsync` or `DisposeAsync` before navigating/replacing its view. `Unloaded` does not automatically dispose the control. This single-window sample relies on process exit to reclaim resources when its window closes; it does not run asynchronous disposal in a close handler. Hosts that continue running after removing the view must explicitly await cleanup.
+
+### Preview and detections
+
+Normal XAML `Width`, `Height`, and layout constraints size the whole control, including its optional status lines. The remaining preview area can resize at runtime. `PreviewStretch` is fixed for each run: `None`, `Uniform`, and `UniformToFill` are supported; `Fill` is rejected. `None` displays one source pixel per physical screen pixel. Preview placement is calculated explicitly so display scaling and overlay mapping use the same geometry.
+
+Inference consumes the entire visible rectangular camera region **as laid out by `PreviewStretch`**, rounded inward to source-pixel boundaries, excluding empty preview space and camera pixels cropped away by that layout. This rectangle is proportionally resized and letterboxed to 640 x 640 with gray padding. `Uniform` includes the full camera frame; `UniformToFill` and `None` can crop it to the viewport. Objects are no longer truncated at an artificial square boundary, but can still be truncated at the actual viewport edge. This input-crop policy is the same in streaming and one-shot modes, even though one-shot mode does not show the live camera. Resize/DPI changes update the next input crop without restarting the model or camera and discard in-flight results with obsolete capture geometry. Streaming clears old boxes and removes model padding when mapping new boxes onto the visible camera rectangle. One-shot mode instead retains the last result and uniformly fits its entire square model-input image (including padding) and matching boxes to the viewport, independent of `PreviewStretch`; resizing does not crop or invalidate the displayed still. A zero-sized viewport pauses inference, not capture. Hiding the camera image does not change the input crop.
+
+`DetectionsUpdated` delivers a read-only list of immutable `PreviewDetection` records containing `ClassId`, `Label`, `Confidence`, and a `PreviewDetectionBox`. Its `X`, `Y`, `Width`, and `Height` are in XAML logical units (DIPs), relative to the preview area's top-left, excluding the status lines. Letterbox removal, preview scaling, and offsets are already applied. In one-shot mode the coordinates instead follow the fitted still image, including its padding. The event and built-in overlays share the same mapping; results are available even when built-in boxes and labels are hidden. A host can position rectangles directly on an overlay aligned with the preview area, without multiplying coordinates by its size. These are not native-window or screen coordinates. They describe the layout when the event fires; resizing redraws built-in overlays but does not emit another inference event. Custom overlays should clear stale results on resize and await the next result.
+
+Snapshot `Detection` records use a distinct `DetectionBox` type: normalized `X`, `Y`, `Width`, and `Height` within the 640 x 640 letterboxed model-input image. Their coordinates remain stable after resizing the view and are suitable for drawing over a saved snapshot. Boxes are clipped to the camera-content rectangle within that image; padding-only detections are discarded. Hosts interested only in classes/counts can ignore either box type. `GetSupportedClasses()` returns the read-only COCO label list, indexed by class ID.
+
+These dependency properties can change while running: `ShowCameraPreview`, `ShowBoundingBoxes`, `ShowLabels`, `ShowConfidence`, `ShowInferenceStatus`, `ShowInferenceTime`, and `ShowEndToEndInferenceTime`. They default to true. `ShowCameraPreview` controls live-image visibility in streaming and still-image visibility in one-shot mode; it never enables a live preview in one-shot mode. Both timing displays update for each accepted result in streaming and one-shot modes. E2E inference time runs from acquiring the available camera frame through preprocessing, inference, postprocessing, dispatch back to the UI, and bounding-box/label element updates, including the image upload in one-shot mode. It excludes waiting for a new frame, stream throttling, event-handler work, and deferred XAML layout/rendering or screen presentation. It measures the work of updating the presentation, not camera preview FPS or camera-to-display latency. The separate inference time covers the engine call (including its output decoding) without preprocessing or presentation updates.
+
+### Supported model contract
+
+Model selection is strict: the control loads exactly the requested file or fails. It accepts one float32 input `[1,3,640,640]` (RGB NCHW, values normalized to 0-1) and one float32 output `[1,300,6]`. Each output row is `x1, y1, x2, y2, confidence, classId`, with coordinates in model-input pixels and class IDs using the standard 80-class COCO ordering. Confidence filtering is currently fixed at 0.5.
+
+Both YOLO26 NMS-free one-to-one exports and exports with embedded NMS can satisfy this contract. The control does not perform additional NMS. Raw candidate outputs, dynamic shapes, other batch sizes, segmentation/pose outputs, and custom class mappings are not supported. Tensor metadata is validated, but cannot prove label semantics or training preprocessing; supplying a model trained/exported for this contract remains the host's responsibility.
+
+Camera capture uses the selected `MediaFrameSourceGroup` in `SharedReadOnly` mode, prefers a color preview stream and otherwise uses a color recording stream. It accepts the current camera format; it does not request 1080p or another resolution.
+
+### ObjectDetection checks
+
+The crop, model-shape, normalized-detection, and snapshot tests reference the application directly. They require Windows, the same WinUI build tools as the application, and the Windows App SDK runtime matching the app's SDK version and test-process architecture, but do not need a camera or model. The test project explicitly enables Windows App SDK bootstrapping, following Microsoft's [non-WinUI testing guidance](https://learn.microsoft.com/windows/apps/develop/testing/#testing-non-winui-functionality). The app disables Deployment Manager auto-initialization because it does not use Main/Singleton features; this also allows its assembly to load in an unpackaged test host. The project reference uses the normal app build without test-specific packaging overrides.
+
+In Visual Studio, build the solution with the platform matching your machine (`x64` or `ARM64`), then run `EdgeAI-ObjectDetection.Tests` in Test Explorer. From a Visual Studio Developer PowerShell, build and run them:
+
+```powershell
+msbuild EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj /t:Restore /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+msbuild EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj /t:Build /p:Configuration=Debug /p:Platform=x64 /p:RuntimeIdentifier=win-x64
+dotnet test EdgeAI-ObjectDetection.Tests\EdgeAI-ObjectDetection.Tests.csproj --no-build --no-restore -c Debug -r win-x64 -p:Platform=x64
+```
+
+For ARM64, use `Platform=ARM64` and `RuntimeIdentifier=win-arm64` for both build commands, and `-r win-arm64 -p:Platform=ARM64` for the test command on a Windows ARM64 device.
+
+On a device with a camera and compatible model, also exercise streaming/one-shot modes, model/camera/provider switching, a missing or incompatible model, and camera disconnection. Resize wide/tall/square previews with each supported stretch mode, including high-DPI displays; boxes must align across the entire visible camera rectangle and stay within its edges. In one-shot mode, confirm the viewport is initially empty, each request displays a matching letterboxed still image and boxes, padding has no boxes, and moving the camera afterward does not change that result. Resize after a shot, toggle image/box visibility, dispose the returned snapshot, and cancel a subsequent request: the retained result must remain aligned and usable. Stop must clear it, and switching back to streaming must restore the live preview. Check that stopping during startup or inference releases the camera and permits a subsequent start. These device checks require WinUI and hardware and are not covered by the hardware-independent suite.
 
 ## Testing
 
@@ -229,6 +355,8 @@ After warm-up, each test runs 1,000 operations. The allowed process-private memo
 | `onnxruntime.dll` is missing at runtime | Restore and rebuild for an explicit runtime such as `win-arm64` or `win-x64`; Windows ML supplies the matching native runtime. |
 | Verification always mismatches | Make sure scanned values match the configured labels and the model class ids align with `CocoLabels.cs`. |
 
-## Contributing and License
+## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+Third-party dependencies are covered in [NOTICE.md](NOTICE.md). Model weights are not included in this repository and are licensed separately. Review the license of the specific model you use.

@@ -1,13 +1,13 @@
+using EdgeAIKiosk.Interfaces;
+using EdgeAIKiosk.Models;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using EdgeAIKiosk.Interfaces;
-using EdgeAIKiosk.Models;
-using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace EdgeAIKiosk.Pipeline;
 

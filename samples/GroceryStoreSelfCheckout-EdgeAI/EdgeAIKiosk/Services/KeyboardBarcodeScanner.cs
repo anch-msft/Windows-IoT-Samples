@@ -1,8 +1,8 @@
-using System;
-using System.Threading.Tasks;
 using EdgeAIKiosk.Interfaces;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using System;
+using System.Threading.Tasks;
 using Windows.System;
 
 namespace EdgeAIKiosk.Services;

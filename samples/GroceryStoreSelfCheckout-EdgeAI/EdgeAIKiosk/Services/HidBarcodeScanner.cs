@@ -1,7 +1,7 @@
+using EdgeAIKiosk.Interfaces;
 using System;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
-using EdgeAIKiosk.Interfaces;
 using Windows.Devices.PointOfService;
 
 namespace EdgeAIKiosk.Services;

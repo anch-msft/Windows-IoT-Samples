@@ -1,10 +1,10 @@
-using System;
-using System.Runtime.InteropServices.WindowsRuntime;
 using EdgeAIKiosk.Interfaces;
 using EdgeAIKiosk.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
 
 namespace EdgeAIKiosk.Pipeline;

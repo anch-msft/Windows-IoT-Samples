@@ -1,6 +1,6 @@
+using Microsoft.ML.OnnxRuntime;
 using System;
 using System.Collections.Generic;
-using Microsoft.ML.OnnxRuntime;
 
 namespace EdgeAIKiosk;
 

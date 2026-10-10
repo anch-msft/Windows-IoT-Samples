@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using EdgeAIKiosk.Models;
 using EdgeAIKiosk.Pipeline;
+using System.Diagnostics;
 
 namespace EdgeAIKiosk.Tests;
 
